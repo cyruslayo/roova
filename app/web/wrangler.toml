@@ -14,7 +14,5 @@ bucket_name = "roova-capture-stage-media"
 
 [vars]
 AUTH_MODE = "access"
-# Set these to the protected preview's Cloudflare Access application values.
-# Until then the API denies all operator requests.
-ACCESS_TEAM_DOMAIN = ""
-ACCESS_AUD = ""
+ACCESS_TEAM_DOMAIN = "https://lucky-silence-5605.cloudflareaccess.com"
+ACCESS_AUD = "a703a6807d193a5fc822c8c120f9aa77537122dac0d75cd7b87b40f55a640f06"

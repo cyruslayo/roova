@@ -12,3 +12,4 @@ app/*/processor-jobs/
 app/*/.dev.vars
 app/*/tsconfig.tsbuildinfo
 video/*.mp4
+.cloudflare/
