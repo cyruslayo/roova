@@ -1,6 +1,8 @@
 import { clearUploadCheckpoint, readUploadCheckpoint, saveUploadCheckpoint, uploadCheckpointKey, type SavedPart } from './multipart';
 
 export type Tour = { id: string; title: string; roomName: string; slug?: string; state: string; publishedAt?: string | null; failureReason?: string | null; createdAt?: string; updatedAt?: string };
+export type PanoramaRoom = { id: string; tourId: string; name: string; order: number; state: string; pending?: boolean; width?: number; height?: number; publishedAt?: string | null };
+export type PublicPanorama = { tour: { title: string; slug: string }; rooms: { id: string; name: string; order: number; panoramaUrl: string; thumbnailUrl: string }[] };
 export type Scene = { posterUrl?: string; panoramaUrl?: string; smallSpzUrl?: string; largeSpzUrl?: string; sourceVideoUrl?: string | null; spatial?: { metricScaleFactor?: number | null; groundPlaneOffset?: number | null; [key: string]: unknown } | null };
 export type PublicTour = { tour: { title: string; roomName: string; slug: string }; scene: Scene };
 const apiBase = import.meta.env.VITE_API_BASE ?? '';
@@ -15,6 +17,20 @@ export const api = {
   list: () => request<{ tours: Tour[] }>('/api/tours'),
   create: (title: string, roomName: string) => request<{ tour: Tour }>('/api/tours', { method: 'POST', body: JSON.stringify({ title, roomName }) }),
   get: (id: string) => request<{ tour: Tour; scene?: Scene; sourceUrl?: string | null }>(`/api/tours/${encodeURIComponent(id)}`),
+  room: (id: string) => request<{ tour: Tour; room: PanoramaRoom }>(`/api/rooms/${encodeURIComponent(id)}`),
+  rooms: (tourId: string) => request<{ rooms: PanoramaRoom[] }>(`/api/tours/${encodeURIComponent(tourId)}/rooms`),
+  createRoom: (tourId: string, name: string) => request<{ room: PanoramaRoom }>(`/api/tours/${encodeURIComponent(tourId)}/rooms`,{method:'POST',body:JSON.stringify({name})}),
+  reorderRooms: (tourId: string, ids: string[]) => request<{ok:boolean}>(`/api/tours/${encodeURIComponent(tourId)}/rooms/order`,{method:'PUT',body:JSON.stringify({ids})}),
+  publishRoom: (roomId: string) => request<{room:PanoramaRoom;url:string}>(`/api/rooms/${encodeURIComponent(roomId)}/publish`,{method:'POST'}),
+  publicPanorama: (slug: string) => request<PublicPanorama>(`/api/public/panoramas/${encodeURIComponent(slug)}`),
+  uploadPanorama: (roomId: string, image: Blob, thumbnail: Blob, progress: (value:number)=>void) => new Promise<{room:PanoramaRoom}>((resolve,reject)=>{
+    const form=new FormData();form.append('panorama',image,'panorama.jpg');form.append('thumbnail',thumbnail,'thumbnail.jpg');
+    const xhr=new XMLHttpRequest();xhr.open('POST',`${apiBase}/api/rooms/${encodeURIComponent(roomId)}/panorama`);
+    xhr.upload.onprogress=event=>{if(event.lengthComputable)progress(Math.round(event.loaded/event.total*100));};
+    xhr.onload=()=>{if(xhr.status>=200&&xhr.status<300){try{resolve(JSON.parse(xhr.responseText));}catch{reject(new Error('Upload response was invalid.'));}}else reject(new Error(xhr.responseText.slice(0,240)||`Upload failed (${xhr.status})`));};
+    xhr.onerror=()=>reject(new Error('The upload connection failed. Your local panorama is still saved.'));
+    xhr.send(form);
+  }),
   status: (id: string) => request<{ tour: Tour; job?: { state?: string; attempts?: number; provider_error?: string | null; provider_operation_id?: string | null } | null }>(`/api/tours/${encodeURIComponent(id)}/status`),
   approve: (id: string) => request<{ tour: Tour }>(`/api/tours/${encodeURIComponent(id)}/approve`, { method: 'POST' }),
   publish: (id: string) => request<{ tour: Tour }>('/api/tours/' + encodeURIComponent(id) + '/publish', { method: 'POST' }),

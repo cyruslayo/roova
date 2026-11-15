@@ -1,6 +1,14 @@
 # Slice 1 capture checks (2026-11-15)
 
-Status: browser simulation passed; physical phone capture is **not verified**. Do not close slice 1 until a real iOS and Android capture/reload pass.
+Status: user reports 37 guided captures on iPhone XS Max/Safari; JPEG metadata and reload were not recorded. Android capture and real-phone stitching remain **unverified**. Do not close slices from desktop simulation alone.
+
+## Full-room handoff and panorama test build (2026-11-15)
+
+- **Reported physical result:** iPhone XS Max, Safari; user captured **all 37 guide points**. iOS/Safari version, captured JPEG dimensions, and reload behavior were not supplied. After target 37 the UI incorrectly said “Turn slowly to find a target.” The new completion state detects 37 distinct saved IDs, stops capture, and offers **Create panorama**, including when an existing room is reopened. The new room table backfills the old tour ID as its first room ID; existing Safari IndexedDB keys remain valid.
+- **Source behavior:** Product stitch controls route only to `app/web/src/capture/stitch.ts`, a device-local WebGL2 texture-array best-pixel adaptation of `reference/vftcam-js/js/modules/app.js` (`performBestPixelStitching` / `renderBestPixelPanorama`). The old `startStitching()` route has no product entry point. Sequential worker preparation has a main-thread fallback. FOV comparison uses neighboring equator captures, with a baseline when image texture is insufficient. Alignment uses measured capture poses and conservative equator image overlap corrections; exposure gains, agreement-weighted seam feathering, nadir fill, and JPEG encoding run on device. This is a focused adaptation, not evidence of matching the reference's full long-running outdoor quality or every seam/warp optimization.
+- **Local integration, not phone evidence:** Windows headless Chrome with a 37-JPEG synthetic fixture created a **4096 × 2048** JPEG, saved it locally, reopened the interactive viewer after reload, and restored an IDB v1 frame after the v2 upgrade without changing its room ID. Worker asset served; no page exceptions. Solid-color synthetic input cannot expose ghost seams, gaps, or image alignment defects.
+- **Local API/visitor fixture:** Local D1 migrations 0001–0003 applied; a tour created its first room with its prior ID, second room added, owner-only finished-JPEG/thumbnail upload returned staged, public listing returned 404 before publication, explicit publication exposed one panorama, and a second published room appeared in changed order. Local visitor Chrome switched between Kitchen and Living room. A later upload preserved the already-published image until explicitly republished. All media in this test were generated solid-color fixtures, not a user's captures.
+- **Still required:** Reopen the user's original Safari session on the exact staging origin; run stitch/reload, record actual 4096 × 2048 output or failure stage, inspect black gaps/seams/memory behavior, test explicit upload/public link, and test Android Chrome. Do not call slices 1–5 accepted from desktop fixtures.
 
 ## Guide scene correction (2026-11-15)
 

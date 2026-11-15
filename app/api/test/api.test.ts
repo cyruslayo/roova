@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canReviewScene, canServeScene, demoImportError, generationDedupeKey, processorInputError } from '../src/index.js';
+import { canReviewScene, canServeScene, demoImportError, generationDedupeKey, jpegDimensions, processorInputError } from '../src/index.js';
 
 describe('processor and publication gates', () => {
   it('allows only the currently active approved version of a published tour', () => {
@@ -33,5 +33,12 @@ describe('processor and publication gates', () => {
     expect(canServeScene({ state: 'ready_for_review', active_scene_version: null, published_at: null }, scene)).toBe(false);
     expect(demoImportError('world', ['poster.webp', 'panorama.png', '100k.spz'])).not.toBeNull();
     expect(demoImportError('world', ['poster.webp', 'panorama.png', '100k.spz', '500k.spz'])).toBeNull();
+  });
+
+  it('checks actual JPEG dimensions before permitting panorama publication',()=>{
+    const sample=new Uint8Array([0xff,0xd8,0xff,0xc0,0x00,0x0b,0x08,0x08,0x00,0x10,0x00,0x03,0x01,0x11,0x00]);
+    expect(jpegDimensions(sample)).toEqual([4096,2048]);
+    expect(jpegDimensions(new Uint8Array([0xff,0xd8,0xff,0xd9]))).toBeNull();
+    expect(jpegDimensions(new Uint8Array([0,1,2]))).toBeNull();
   });
 });

@@ -67,6 +67,7 @@ app.post('/api/tours', async c => {
   const title=String(body.title??'').trim(), room=String(body.roomName??'').trim(); if(!title||title.length>120||room.length>120) return json({error:'title (1–120 chars) and roomName (0–120 chars) required'},400);
   const tourId=id(), slug=`${title.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,48)||'tour'}-${tourId.slice(0,8)}`;
   await c.env.DB.prepare('INSERT INTO tours(id,owner_id,title,room_name,slug,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').bind(tourId,c.get('user'),title,room,slug,'draft',now(),now()).run();
+  await c.env.DB.prepare('INSERT INTO panorama_rooms(id,tour_id,name,sort_order,updated_at) VALUES(?,?,?,0,?)').bind(tourId,tourId,room,now()).run();
   return json({tour:tourDTO(await owned(c.env.DB,tourId,c.get('user')))},201);
 });
 // Local-only raw-video fixture path: private by default and enters the same processor queue as uploads.
@@ -240,6 +241,63 @@ app.post('/api/internal/jobs/:id/events',async c=>{
 function sceneDTO(v:any){const base=`/api/public/assets/${v.id}/`;return {posterUrl:base+'poster',panoramaUrl:v.panorama_key?base+'panorama':null,smallSpzUrl:base+'small-spz',largeSpzUrl:v.large_spz_key?base+'large-spz':null,spatial:v.spatial_json?JSON.parse(v.spatial_json):undefined};}
 app.get('/api/public/tours/:slug',async c=>{const t=await c.env.DB.prepare('SELECT * FROM tours WHERE slug=?').bind(c.req.param('slug')).first<any>();if(!t)return json({error:'not found'},404);const s=t.active_scene_version?await c.env.DB.prepare('SELECT * FROM scene_versions WHERE id=? AND tour_id=?').bind(t.active_scene_version,t.id).first<any>():null;if(!canServeScene(t,s))return json({error:'not found'},404);c.header('cache-control','public, max-age=30');return json({tour:{title:t.title,roomName:t.room_name,slug:t.slug},scene:sceneDTO(s)});});
 app.get('/api/public/assets/:version/:kind',async c=>{const v=await c.env.DB.prepare('SELECT s.*,t.state,t.active_scene_version,t.published_at,t.id AS tid FROM scene_versions s JOIN tours t ON t.id=s.tour_id WHERE s.id=?').bind(c.req.param('version')).first<any>();if(!v||!canServeScene(v,v))return json({error:'not found'},404);const field:Record<string,string>={'poster':'poster_key','panorama':'panorama_key','small-spz':'small_spz_key','large-spz':'large_spz_key'},key=v[field[c.req.param('kind')]];if(!key)return json({error:'not found'},404);const obj=await c.env.MEDIA.get(key);if(!obj)return json({error:'not found'},404);const headers=new Headers({'cache-control':'public, max-age=31536000, immutable'});obj.writeHttpMetadata(headers);headers.set('etag',obj.httpEtag);return new Response(obj.body,{headers});});
+const roomDTO=(r:any)=>({id:r.id,tourId:r.tour_id,name:r.name,order:r.sort_order,state:r.state,width:r.width,height:r.height,publishedAt:r.published_at,pending:!!r.pending_panorama_key});
+async function ownedRoom(db:D1Database,roomId:string,user:string){return db.prepare('SELECT r.*,t.title,t.slug,t.owner_id FROM panorama_rooms r JOIN tours t ON t.id=r.tour_id WHERE r.id=? AND t.owner_id=?').bind(roomId,user).first<any>();}
+app.get('/api/tours/:id/rooms',async c=>{
+  const tour=await owned(c.env.DB,c.req.param('id'),c.get('user'));if(!tour)return json({error:'not found'},404);
+  const {results=[]}=await c.env.DB.prepare('SELECT * FROM panorama_rooms WHERE tour_id=? ORDER BY sort_order,id').bind(tour.id).all<any>();
+  return json({rooms:results.map(roomDTO)});
+});
+app.post('/api/tours/:id/rooms',async c=>{
+  const tour=await owned(c.env.DB,c.req.param('id'),c.get('user'));if(!tour)return json({error:'not found'},404);
+  const body=await c.req.json<any>().catch(()=>({})),name=String(body.name??'').trim();if(!name||name.length>80)return json({error:'Room name must be 1–80 characters'},400);
+  const next=await c.env.DB.prepare('SELECT COALESCE(MAX(sort_order),-1)+1 AS n FROM panorama_rooms WHERE tour_id=?').bind(tour.id).first<{n:number}>();
+  const roomId=id();await c.env.DB.prepare('INSERT INTO panorama_rooms(id,tour_id,name,sort_order,updated_at) VALUES(?,?,?,?,?)').bind(roomId,tour.id,name,next?.n??0,now()).run();
+  return json({room:roomDTO(await ownedRoom(c.env.DB,roomId,c.get('user')))},201);
+});
+app.put('/api/tours/:id/rooms/order',async c=>{
+  const tour=await owned(c.env.DB,c.req.param('id'),c.get('user'));if(!tour)return json({error:'not found'},404);
+  const body=await c.req.json<any>().catch(()=>({})),ids=body.ids;
+  const {results=[]}=await c.env.DB.prepare('SELECT id FROM panorama_rooms WHERE tour_id=? ORDER BY sort_order,id').bind(tour.id).all<{id:string}>();
+  if(!Array.isArray(ids)||ids.length!==results.length||new Set(ids).size!==results.length||results.some(room=>!ids.includes(room.id)))return json({error:'Order must include every room exactly once'},422);
+  await c.env.DB.batch(ids.map((roomId:string,index:number)=>c.env.DB.prepare('UPDATE panorama_rooms SET sort_order=?,updated_at=? WHERE id=? AND tour_id=?').bind(index,now(),roomId,tour.id)));
+  return json({ok:true});
+});
+app.get('/api/rooms/:id',async c=>{const room=await ownedRoom(c.env.DB,c.req.param('id'),c.get('user'));if(!room)return json({error:'not found'},404);return json({tour:{id:room.tour_id,title:room.title,roomName:room.name,state:room.state,slug:room.slug},room:roomDTO(room)});});
+app.post('/api/rooms/:id/panorama',async c=>{
+  const room=await ownedRoom(c.env.DB,c.req.param('id'),c.get('user'));if(!room)return json({error:'not found'},404);
+  const body=await c.req.formData().catch(()=>null),image=body?.get('panorama'),thumbnail=body?.get('thumbnail');
+  if(!(image instanceof File)||!(thumbnail instanceof File)||image.type!=='image/jpeg'||thumbnail.type!=='image/jpeg'||!image.size||image.size>24_000_000||!thumbnail.size||thumbnail.size>2_000_000)return json({error:'JPEG panorama (≤24 MB) and JPEG thumbnail (≤2 MB) required'},422);
+  const full=new Uint8Array(await image.arrayBuffer()),thumb=new Uint8Array(await thumbnail.arrayBuffer());
+  if(jpegDimensions(full)?.join('x')!=='4096x2048'||!jpegDimensions(thumb))return json({error:'Panorama must be a 4096 × 2048 JPEG with a valid thumbnail'},422);
+  const version=id(),prefix=`private/${room.tour_id}/panorama-rooms/${room.id}/${version}`;
+  const panoramaKey=`${prefix}/panorama.jpg`,thumbnailKey=`${prefix}/thumbnail.jpg`;
+  await c.env.MEDIA.put(panoramaKey,full,{httpMetadata:{contentType:'image/jpeg'}});
+  await c.env.MEDIA.put(thumbnailKey,thumb,{httpMetadata:{contentType:'image/jpeg'}});
+  await c.env.DB.prepare("UPDATE panorama_rooms SET pending_panorama_key=?,pending_thumbnail_key=?,width=4096,height=2048,state=CASE WHEN state='published' THEN state ELSE 'staged' END,updated_at=? WHERE id=? AND tour_id=?").bind(panoramaKey,thumbnailKey,now(),room.id,room.tour_id).run();
+  return json({room:roomDTO(await ownedRoom(c.env.DB,room.id,c.get('user')))});
+});
+app.post('/api/rooms/:id/publish',async c=>{
+  const room=await ownedRoom(c.env.DB,c.req.param('id'),c.get('user'));if(!room)return json({error:'not found'},404);
+  if(!room.pending_panorama_key||!room.pending_thumbnail_key||room.width!==4096||room.height!==2048)return json({error:'Upload and review a panorama before publishing'},409);
+  if(!await c.env.MEDIA.head(room.pending_panorama_key)||!await c.env.MEDIA.head(room.pending_thumbnail_key))return json({error:'Uploaded panorama assets are missing; retry upload'},409);
+  await c.env.DB.prepare("UPDATE panorama_rooms SET panorama_key=pending_panorama_key,thumbnail_key=pending_thumbnail_key,pending_panorama_key=NULL,pending_thumbnail_key=NULL,state='published',published_at=?,updated_at=? WHERE id=? AND tour_id=?").bind(now(),now(),room.id,room.tour_id).run();
+  return json({room:roomDTO(await ownedRoom(c.env.DB,room.id,c.get('user'))),url:`/p/${encodeURIComponent(room.slug)}`});
+});
+app.get('/api/public/panoramas/:slug',async c=>{
+  const tour=await c.env.DB.prepare('SELECT id,title,slug FROM tours WHERE slug=?').bind(c.req.param('slug')).first<any>();if(!tour)return json({error:'not found'},404);
+  const {results=[]}=await c.env.DB.prepare("SELECT id,name,sort_order FROM panorama_rooms WHERE tour_id=? AND state='published' AND published_at IS NOT NULL AND panorama_key IS NOT NULL AND thumbnail_key IS NOT NULL ORDER BY sort_order,id").bind(tour.id).all<any>();
+  if(!results.length)return json({error:'not found'},404);
+  return json({tour:{title:tour.title,slug:tour.slug},rooms:results.map(room=>({id:room.id,name:room.name,order:room.sort_order,panoramaUrl:`/api/public/panoramas/assets/${encodeURIComponent(room.id)}/panorama`,thumbnailUrl:`/api/public/panoramas/assets/${encodeURIComponent(room.id)}/thumbnail`}))});
+});
+app.get('/api/public/panoramas/assets/:roomId/:kind',async c=>{
+  const room=await c.env.DB.prepare("SELECT * FROM panorama_rooms WHERE id=? AND state='published' AND published_at IS NOT NULL").bind(c.req.param('roomId')).first<any>();
+  const key=c.req.param('kind')==='panorama'?room?.panorama_key:c.req.param('kind')==='thumbnail'?room?.thumbnail_key:null;
+  if(!key)return json({error:'not found'},404);
+  const object=await c.env.MEDIA.get(key);if(!object)return json({error:'not found'},404);
+  return new Response(object.body,{headers:{'content-type':'image/jpeg','cache-control':'public,max-age=300','etag':object.httpEtag}});
+});
+app.get('/p/:slug',c=>c.env.ASSETS.fetch(new URL('/index.html',c.req.url)));
 app.get('/t/:slug',async c=>{
   const t=await c.env.DB.prepare("SELECT * FROM tours WHERE slug=? AND state='published' AND active_scene_version IS NOT NULL").bind(c.req.param('slug')).first<any>();
   if(!t)return c.text('Tour not found',404);
@@ -253,4 +311,17 @@ app.get('/t/:slug',async c=>{
 app.get('/studio',c=>c.env.ASSETS.fetch(new URL('/index.html',c.req.url)));
 app.get('/studio/*',c=>c.env.ASSETS.fetch(new URL('/index.html',c.req.url)));
 function escapeHtml(v:string){return v.replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]!));}
+export function jpegDimensions(bytes:Uint8Array):[number,number]|null {
+  if(bytes[0]!==0xff||bytes[1]!==0xd8)return null;
+  for(let offset=2;offset+9<bytes.length;){
+    if(bytes[offset++]!==0xff)return null;
+    let marker=bytes[offset++];while(marker===0xff)marker=bytes[offset++];
+    if(marker===0xd9||marker===0xda)return null;
+    if(offset+2>bytes.length)return null;
+    const size=(bytes[offset]<<8)|bytes[offset+1];if(size<2||offset+size>bytes.length)return null;
+    if([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf].includes(marker))return [(bytes[offset+5]<<8)|bytes[offset+6],(bytes[offset+3]<<8)|bytes[offset+4]];
+    offset+=size;
+  }
+  return null;
+}
 export default app;

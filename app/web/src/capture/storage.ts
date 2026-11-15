@@ -6,24 +6,73 @@ export type SavedFrame = {
   pose: Pose;
 };
 
+export type SavedPanorama = { roomId: string; imageBlob: Blob; width: number; height: number; timestamp: string; sourceIds: number[] };
+export type StitchJob = { roomId: string; state: 'running' | 'failed' | 'complete'; message: string; updatedAt: string };
 const DB_NAME = 'stillroom-capture';
 const STORE = 'frames';
+const PANORAMAS = 'panoramas', JOBS = 'stitch-jobs';
 
 function open(): Promise<IDBDatabase> {
   if (!globalThis.indexedDB) return Promise.reject(new Error('This browser does not provide local image storage.'));
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, 2);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) {
         const store = db.createObjectStore(STORE, { keyPath: 'key' });
         store.createIndex('roomId', 'roomId');
       }
+      if (!db.objectStoreNames.contains(PANORAMAS)) db.createObjectStore(PANORAMAS, { keyPath: 'roomId' });
+      if (!db.objectStoreNames.contains(JOBS)) db.createObjectStore(JOBS, { keyPath: 'roomId' });
     };
     request.onerror = () => reject(request.error ?? new Error('Local storage could not be opened.'));
     request.onblocked = () => reject(new Error('Close other Stillroom tabs, then retry local storage.'));
     request.onsuccess = () => resolve(request.result);
   });
+}
+
+async function record<T>(store: string, mode: IDBTransactionMode, operation: (object: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  const db=await open();
+  try { return await new Promise<T>((resolve,reject)=>{
+    const tx=db.transaction(store,mode);let value:T;
+    const request=operation(tx.objectStore(store));
+    request.onsuccess=()=>{value=request.result;};
+    tx.oncomplete=()=>resolve(value);
+    tx.onerror=()=>reject(tx.error??new Error('Device storage failed.'));
+    tx.onabort=()=>reject(tx.error??new Error('Device storage was interrupted.'));
+  }); } finally { db.close(); }
+}
+
+export function loadStitchJob(roomId: string): Promise<StitchJob | undefined> { return record(JOBS,'readonly',store=>store.get(roomId)); }
+export function saveStitchJob(job: StitchJob): Promise<StitchJob> { return record(JOBS,'readwrite',store=>store.put(job)).then(()=>job); }
+
+async function opfsFile(roomId: string, create: boolean) {
+  if (!navigator.storage?.getDirectory) return null;
+  const root=await navigator.storage.getDirectory();
+  const dir=await root.getDirectoryHandle('stillroom-panoramas', {create});
+  return dir.getFileHandle(`${roomId.replace(/[^a-zA-Z0-9_-]/g,'_')}.jpg`,{create});
+}
+
+export async function savePanorama(panorama: SavedPanorama): Promise<void> {
+  if(panorama.imageBlob.type!=='image/jpeg' || !panorama.imageBlob.size || panorama.width!==4096 || panorama.height!==2048)throw new Error('Invalid panorama output.');
+  // Store metadata first; the IndexedDB blob is a fallback on browsers without OPFS.
+  const usesOpfs=!!navigator.storage?.getDirectory;
+  if(usesOpfs) {
+    const handle=await opfsFile(panorama.roomId,true);
+    if(!handle)throw new Error('Device panorama storage is unavailable.');
+    const writer=await handle.createWritable();
+    try { await writer.write(panorama.imageBlob);await writer.close(); }
+    catch(error) {await writer.abort();throw error;}
+  }
+  await record(PANORAMAS,'readwrite',store=>store.put({ ...panorama, imageBlob: usesOpfs ? null : panorama.imageBlob }));
+}
+
+export async function loadPanorama(roomId: string): Promise<SavedPanorama | null> {
+  const meta=await record<SavedPanorama | undefined>(PANORAMAS,'readonly',store=>store.get(roomId));
+  if(!meta)return null;
+  if(meta.imageBlob)return meta;
+  try { const file=await (await opfsFile(roomId,false))?.getFile();return file?{...meta,imageBlob:file}:null; }
+  catch { return null; }
 }
 
 export async function loadFrames(roomId: string): Promise<SavedFrame[]> {

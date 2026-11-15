@@ -50,7 +50,7 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
 
   const restore = useCallback(async () => {
     try {
-      const [result, saved] = await Promise.all([api.get(roomId), loadFrames(roomId)]);
+      const [result, saved] = await Promise.all([api.room(roomId), loadFrames(roomId)]);
       captured.current = new Set(saved.map(frame => frame.targetId));
       setTour(result.tour); setFrames(saved); setReady(true); setError('');
     } catch (err) { setError(errorText(err, 'storage')); setReady(false); }
@@ -133,6 +133,10 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
       const saved = await saveFrame(roomId, target, jpeg, canvas.width, canvas.height, timestamp, videoTime, measured);
       captured.current.add(target.id);
       setFrames(previous => [...previous.filter(frame => frame.targetId !== target.id), saved]);
+      if (captured.current.size === TARGETS.length) {
+        stream.current?.getTracks().forEach(track => track.stop());
+        clearHold();
+      }
       setAlignment(INITIAL); setError('');
     } catch (err) { captureBlocked.current = true; setError(errorText(err, 'storage')); }
     finally { savingRef.current = false; setSaving(false); }
@@ -141,7 +145,7 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
   useEffect(() => {
     if (!motion || !camera || !ready) return;
     const onOrientation = (event: DeviceOrientationEvent) => {
-      if (event.alpha === null || event.beta === null || event.gamma === null) return;
+      if (captured.current.size === TARGETS.length || event.alpha === null || event.beta === null || event.gamma === null) return;
       lastSensor.current = Date.now();
       setSensor(true);
       pose.current = orientationQuaternion(event.alpha, event.beta, event.gamma);
@@ -169,19 +173,21 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
     return () => { removeEventListener('deviceorientation', onOrientation); removeEventListener('devicemotion', onMotion); clearHold(); };
   }, [motion, camera, ready, capture, clearHold]);
 
-  const status = saving ? 'Saving your frame…' : captureBlocked.current ? 'Save failed · retry when ready' : !camera ? 'Enable the rear camera to begin' : !motion ? 'Enable motion to guide your capture' : !sensor ? 'Waiting for phone orientation… Keep this page open on a phone.' : !alignment.target ? 'Turn slowly to find a target' : tilt.current === null && Math.abs(alignment.target.pitch) <= 60 ? 'Waiting for phone level sensor…' : !alignment.level ? 'Level your phone' : alignment.holding ? 'Hold steady for one second' : alignment.distance < ALIGNMENT_THRESHOLD ? 'Aligned' : 'Almost there · move toward the target';
+  const complete = ready && captured.current.size === TARGETS.length;
+  const status = saving ? 'Saving your frame…' : complete ? 'Room capture complete · all 37 views saved on this device' : captureBlocked.current ? 'Save failed · retry when ready' : !camera ? 'Enable the rear camera to begin' : !motion ? 'Enable motion to guide your capture' : !sensor ? 'Waiting for phone orientation… Keep this page open on a phone.' : !alignment.target ? 'Turn slowly to find a target' : tilt.current === null && Math.abs(alignment.target.pitch) <= 60 ? 'Waiting for phone level sensor…' : !alignment.level ? 'Level your phone' : alignment.holding ? 'Hold steady for one second' : alignment.distance < ALIGNMENT_THRESHOLD ? 'Aligned' : 'Almost there · move toward the target';
 
   return <main className="capture-page">
     <header className="capture-header"><a href="/studio" className="capture-back"><ArrowLeft size={18}/> Studio</a><span className="capture-brand"><House size={17}/> stillroom<span>.</span></span><span className="capture-private">PRIVATE CAPTURE</span></header>
     <div className="capture-layout"><section className="capture-view" aria-label="Live room camera and target guidance">
       <video ref={video} muted playsInline autoPlay className="capture-video" />
       {camera && <div ref={guideContainer} className="capture-guide" aria-hidden="true" />}
-      {camera && sensor && <div className={`capture-reticle ${alignment.holding ? 'holding' : alignment.target ? 'approaching' : ''}`} aria-hidden="true"><Focus size={74} strokeWidth={1.2}/></div>}
+      {camera && sensor && !complete && <div className={`capture-reticle ${alignment.holding ? 'holding' : alignment.target ? 'approaching' : ''}`} aria-hidden="true"><Focus size={74} strokeWidth={1.2}/></div>}
       <div className="capture-view-label"><span>ROOM / {tour?.roomName ?? 'Loading…'}</span><strong>{alignment.target ? `TARGET ${String(alignment.target.id).padStart(2, '0')}` : 'GUIDED CAPTURE'}</strong></div>
       <div className="capture-feedback" role="status">{status}</div>
     </section><section className="capture-panel"><span className="section-overline">ROOM SESSION</span><h1>{tour?.roomName ?? 'Opening room…'}</h1><p>Move your phone toward a target. When aligned, hold steady to capture automatically. Frames stay on this device.</p>
       {error && <div className="capture-error" role="alert"><ShieldAlert size={20}/><span>{error}</span>{(!ready || captureBlocked.current) && <button type="button" onClick={() => { if (!ready) void restore(); else { captureBlocked.current = false; setError(''); } }}><RotateCcw size={15}/> {ready ? 'Retry capture' : 'Retry loading'}</button>}</div>}
-      <div className="capture-permissions"><button type="button" className="capture-action" disabled={!ready || camera} onClick={() => void startCamera()}><Camera size={20}/><span>{camera ? 'Camera ready' : 'Enable camera'}</span>{camera && <Check size={18}/>}</button><button type="button" className="capture-action" disabled={!ready || !camera || motion} onClick={() => void startMotion()}><Compass size={20}/><span>{motion ? 'Motion enabled' : 'Enable motion'}</span>{motion && <Check size={18}/>}</button></div>
+      {complete && <div className="capture-complete" role="status"><Check size={22}/><div><strong>All 37 views captured</strong><p>Your originals remain on this phone. Continue to prepare your panorama.</p></div><a className="primary action-anchor" href={`/studio/panorama/${encodeURIComponent(roomId)}`}>Create panorama</a></div>}
+      {!complete && <div className="capture-permissions"><button type="button" className="capture-action" disabled={!ready || camera} onClick={() => void startCamera()}><Camera size={20}/><span>{camera ? 'Camera ready' : 'Enable camera'}</span>{camera && <Check size={18}/>}</button><button type="button" className="capture-action" disabled={!ready || !camera || motion} onClick={() => void startMotion()}><Compass size={20}/><span>{motion ? 'Motion enabled' : 'Enable motion'}</span>{motion && <Check size={18}/>}</button></div>}
       <div className="capture-progress"><div><span>CAPTURE PROGRESS</span><strong>{frames.length} / {TARGETS.length}</strong></div><div className="capture-targets" aria-label="37 capture targets">{TARGETS.map(target => <span key={target.id} className={frames.some(frame => frame.targetId === target.id) ? 'saved' : alignment.target?.id === target.id ? 'active' : ''} title={`Target ${target.id}, ${target.yaw}° yaw, ${target.pitch}° pitch`} aria-label={`Target ${target.id}: ${frames.some(frame => frame.targetId === target.id) ? 'captured' : 'not captured'}`} />)}</div></div>
       {frames.length > 0 && <div className="capture-saved"><h2>Saved on this device</h2><img src={previewUrl} alt={`Captured room frame for target ${frames.at(-1)?.targetId}`} /><p>Target {frames.at(-1)?.targetId} · {frames.at(-1)?.width} × {frames.at(-1)?.height} px · {new Date(frames.at(-1)!.timestamp).toLocaleString()}</p><p>Measured pose: yaw {frames.at(-1)?.pose.yaw.toFixed(1)}°, pitch {frames.at(-1)?.pose.pitch.toFixed(1)}°, roll {frames.at(-1)?.pose.roll.toFixed(1)}°</p></div>}
     </section></div>

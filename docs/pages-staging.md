@@ -4,7 +4,7 @@ Project: `roova-capture-stage`. The preview is deployed at the stable **preview-
 
 ## Provisioned staging-only resources
 
-- D1: `roova-capture-stage-db` (migrations `0001_init.sql` and `0002_processor_contract.sql` applied remotely).
+- D1: `roova-capture-stage-db` (migrations `0001_init.sql`, `0002_processor_contract.sql`, and `0003_panorama_rooms.sql` applied remotely).
 - Private R2: `roova-capture-stage-media` (required by the existing API binding; room captures stay in the phone's IndexedDB).
 - Pages configuration: `app/web/wrangler.toml`, `AUTH_MODE=access`. The team domain and audience correspond to the `roova-capture-stage-preview` Access application. Never use `AUTH_MODE=local` on a public hostname.
 
@@ -30,7 +30,7 @@ npm run build:pages
 ..\api\node_modules\.bin\wrangler.cmd pages deploy dist --project-name roova-capture-stage --branch staging
 ```
 
-`build:pages` compiles the existing Hono Worker into Pages Advanced Mode's `dist/_worker.js`. That adapter routes `/api/*`, `/studio*`, and `/t/*` to Hono and delegates static assets to `env.ASSETS`. No API key is bundled in the frontend. The app's existing `/studio` route serves the shell on reload.
+`build:pages` compiles the existing Hono Worker into Pages Advanced Mode's `dist/_worker.js`. That adapter routes `/api/*`, `/studio*`, `/t/*`, and `/p/*` to Hono and delegates static assets to `env.ASSETS`. No API key is bundled in the frontend. The app's existing `/studio` route serves the shell on reload. Before deploying a build that requires rooms, apply `0003_panorama_rooms.sql` to the staging D1 database using `wrangler d1 migrations apply DB --remote` from `app/web`.
 
 ## Phone acceptance
 
@@ -38,3 +38,5 @@ npm run build:pages
 2. Select the tour, open capture, allow rear camera and motion, align with any target, and hold for one second. Check target number, preview, measured yaw/pitch/roll, timestamp, and pixel dimensions.
 3. Reload on the same browser and hostname. The frame and captured marker must return. Record phone model, OS/browser versions, output dimensions, and any failed stage in `docs/capture-checks.md`.
 4. A different phone/browser/origin has different local frames; no images are uploaded by slice 1. Physical-device results are required before declaring slice 1 complete.
+
+For the full-room build, after **37 / 37** choose **Create panorama**, check the on-device stitched viewer and **4096 × 2048** JPEG, reload, then explicitly choose **Upload finished panorama** and **Publish room**. Add a second room from Studio and check the ordered visitor view at `/p/<tour-slug>`. A failed stitch or upload must retain the original 37 JPEGs. Record the output dimensions and failed stage, not just whether a button was tapped.
