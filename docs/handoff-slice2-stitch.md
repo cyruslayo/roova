@@ -72,6 +72,15 @@ The fix:
    - the viewer opens a quarter turn away from target 13 (its starting heading; the geometry is correct);
    - widening the field-of-view search if real phones disagree with the prior.
 
+## Update after the first successful iPhone restitch (2026-11-15)
+
+The restitch now completes on iPhone Safari (4096 × 2048), but **Image alignment reported fallback**, so frames sat on raw sensor poses; that matches the doubled cornices, fan and edges. See the top entry of `docs/capture-checks.md`.
+
+- Processing details now explain an alignment fallback (exception text, or the null-return stage with corner/pair/match counts). Diagnostic only.
+- New **Export source frames** button (ZIP of the 37 original JPEGs + `poses.json`, on device, never uploaded) and `--recorded` mode in `e2e/run-stitch-replay.mjs` to replay it on desktop at the iPhone's 1280 px cap.
+- Next: redeploy (needs the user's go-ahead), restitch and export on the iPhone, read the alignment reason, replay the ZIP locally, then decide the fix. Exposure, broad tone, FOV, seam and vignetting tuning wait until alignment runs on the real frames.
+- Local Playwright: not a project dependency. `NODE_PATH=C:/AI2026/pin-atlas/node_modules` (Playwright 1.64.1, already on this machine) works for the runner.
+
 ## Running the checks locally (Windows PowerShell)
 
 ```powershell

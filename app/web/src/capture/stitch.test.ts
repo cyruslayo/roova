@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TARGETS } from './core';
-import { baselineFov, requireCompleteRoom, stitchPose, workingFrameSize } from './stitch';
+import { alignmentFallbackDetail, baselineFov, requireCompleteRoom, stitchPose, workingFrameSize } from './stitch';
 import type { SavedFrame } from './storage';
 
 const frame = (targetId: number): SavedFrame => ({
@@ -46,5 +46,16 @@ describe('frame geometry preparation', () => {
     expect(pose.hasFullOrientation).toBe(true);
     expect(pose.yaw).toBeCloseTo(0, 6);
     expect(pose.pitch).toBeCloseTo(0, 6);
+  });
+  it('explains why image alignment fell back instead of hiding it', () => {
+    const thrown = alignmentFallbackDetail('align failed: RangeError: Array buffer allocation failed', { stage: 'matching', frames: 37, corners: [0, 3, 40] });
+    expect(thrown).toContain('error: RangeError: Array buffer allocation failed');
+    expect(thrown).toContain('last stage matching');
+    expect(thrown).toContain('min 0 / median 3 / max 40, 2 frames under 10');
+    const sparse = alignmentFallbackDetail(undefined, { stage: 'solve', frames: 37, reason: 'no focal scale', corners: [5, 6, 7], pairsTried: 200, matchesFound: 40, pairsMatched: 2, matchesKept: 12, focal: [{ focal: 1, measured: 2, consistent: 1, far: 1 }] });
+    expect(sparse).toContain('no focal scale');
+    expect(sparse).toContain('2/200 ordered pairs matched (12 of 40 matches kept)');
+    expect(sparse).toContain('x1.00 1/1');
+    expect(alignmentFallbackDetail(undefined, null)).toContain('no diagnostics returned');
   });
 });

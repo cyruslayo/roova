@@ -9,9 +9,10 @@ import { Quaternion, Vector3 } from 'three';
 import { TARGETS, poseFromQuaternion } from '../src/capture/core';
 import { stitchRoom } from '../src/capture/stitch';
 import type { SavedFrame } from '../src/capture/storage';
+import { buildFrameExport, readZip, type FrameExportManifest } from '../src/capture/export-frames';
 
 const D = Math.PI / 180;
-type Options = { simulateSafariBlobFailure?: boolean; width: number; height: number; shortFov: number; poseError: number; rollError: number; exposureJitter: number; seed: number };
+type Options = { simulateSafariBlobFailure?: boolean; exportOnly?: boolean; width: number; height: number; shortFov: number; poseError: number; rollError: number; exposureJitter: number; seed: number };
 
 function rng(seed: number) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 const hash = (a: number, b: number) => { const h = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return h - Math.floor(h); };
@@ -72,6 +73,8 @@ async function run(partial: Partial<Options>) {
     const pose = poseFromQuaternion(sensed)!;
     frames.push({ key: `replay:${target.id}`, roomId: 'replay', targetId: target.id, targetYaw: target.yaw, targetPitch: target.pitch, imageBlob: blob, width: o.width, height: o.height, timestamp: new Date().toISOString(), videoTime: 0, pose });
   }
+  // Round trip check for "Export source frames": the ZIP the product would save, as a blob URL for runRecorded().
+  if (o.exportOnly) return { zipUrl: URL.createObjectURL((await buildFrameExport('replay', frames, null)).blob) };
   const t0 = performance.now(), stages: string[] = [];
   // Reproduces the Safari symptom: createImageBitmap(blob) rejects with
   // "An error occurred reading the Blob argument to createImageBitmap", and
@@ -115,3 +118,28 @@ async function run(partial: Partial<Options>) {
 
 (window as unknown as { runReplay: typeof run }).runReplay = run;
 document.body.dataset.ready = '1';
+
+// Replays a real capture exported with "Export source frames" (a ZIP served from
+// e2e/fixtures/, which is git-ignored because it holds the user's photos). Frames and
+// poses go through stitchRoom() unchanged; maxLongSide 1280 matches an iPhone run.
+async function runRecorded(url: string, maxLongSide = 1280) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Cannot load ${url}: ${response.status}`);
+  const files = readZip(await response.arrayBuffer());
+  const manifest = JSON.parse(new TextDecoder().decode(files.get('poses.json'))) as FrameExportManifest;
+  const frames: SavedFrame[] = manifest.frames.map(f => ({
+    key: `${manifest.roomId}:${f.targetId}`, roomId: manifest.roomId, targetId: f.targetId, targetYaw: f.targetYaw, targetPitch: f.targetPitch,
+    imageBlob: new Blob([files.get(f.file)!], { type: 'image/jpeg' }), width: f.width, height: f.height, timestamp: f.timestamp, videoTime: f.videoTime,
+    pose: { yaw: f.yaw, pitch: f.pitch, roll: f.roll, orientationQuaternion: f.orientationQuaternion },
+  }));
+  const t0 = performance.now();
+  const result = await stitchRoom(frames, () => {}, { maxLongSide });
+  const seconds = (performance.now() - t0) / 1000;
+  const bitmap = await createImageBitmap(result.blob);
+  const preview = document.createElement('canvas'); preview.width = 2048; preview.height = 1024;
+  preview.getContext('2d')!.drawImage(bitmap, 0, 0, 2048, 1024);
+  const full = await new Promise<string>(resolve => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.readAsDataURL(result.blob); });
+  return { device: manifest.device, phoneStitch: manifest.lastStitch, output: { width: bitmap.width, height: bitmap.height, bytes: result.blob.size }, seconds: +seconds.toFixed(1),
+    frameSize: result.frameSize, sourceSize: result.sourceSize, fov: result.fov, stages: result.stages, previewUrl: preview.toDataURL('image/jpeg', 0.85), fullUrl: full };
+}
+(window as unknown as { runRecorded: typeof runRecorded }).runRecorded = runRecorded;

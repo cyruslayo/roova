@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Check, Download, RotateCcw, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Check, Download, FileArchive, RotateCcw, ShieldAlert } from 'lucide-react';
 import { api, type PanoramaRoom as Room, type Tour } from '../api';
 import { loadFrames, loadPanorama, loadStitchJob, savePanorama, saveStitchJob, type SavedPanorama, type StitchJob } from './storage';
 import { requireCompleteRoom, stitchRoom, type StitchResult } from './stitch';
 import PanoramaViewer from './PanoramaViewer';
+import { buildFrameExport } from './export-frames';
 
 export default function PanoramaRoom({roomId}:{roomId:string}) {
   const [tour,setTour]=useState<Tour | null>(null),[panorama,setPanorama]=useState<SavedPanorama | null>(null);
@@ -56,6 +57,24 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
     link.href=url;link.download=`stillroom-${roomId}-panorama.jpg`;document.body.appendChild(link);link.click();link.remove();
     setTimeout(()=>URL.revokeObjectURL(url),60000);
   };
+  const [exportNote,setExportNote]=useState('');
+  // Explicit, on-device only: the original frames and poses as one ZIP for replaying a capture elsewhere.
+  const exportFrames=async()=>{
+    if(busy)return;setBusy(true);setError('');setExportNote('Packing the original frames…');
+    try {
+      const frames=await loadFrames(roomId);
+      if(!frames.length)throw new Error('No saved frames to export.');
+      const {blob}=await buildFrameExport(roomId,frames,report);
+      const url=URL.createObjectURL(blob),link=document.createElement('a');
+      link.href=url;link.download=`stillroom-${roomId}-frames.zip`;document.body.appendChild(link);link.click();link.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      setExportNote(`Exported ${frames.length} original frames and their poses (${(blob.size/1048576).toFixed(1)} MB). The file stays on this device; nothing was uploaded.`);
+    } catch(e){setExportNote('');setError(e instanceof Error?e.message:'Could not export the source frames.');}
+    finally{setBusy(false);}
+  };
+  const exportControl=<div className="panorama-export"><button type="button" className="outline" disabled={busy||count===0} onClick={()=>void exportFrames()}><FileArchive size={16}/> Export source frames</button>
+    <p>Saves the {count} original photos and their measured positions as a ZIP on this device, for troubleshooting. Nothing is uploaded.</p>
+    {exportNote && <p role="status">{exportNote}</p>}</div>;
   const upload=async()=>{
     if(!panorama||busy)return;
     setBusy(true);setError('');setUploadProgress(0);
@@ -94,6 +113,7 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
           <p>Source frames {report.sourceSize.width} × {report.sourceSize.height}, processed at {report.frameSize.width} × {report.frameSize.height} · field of view {report.fov.horizontal.toFixed(1)}° × {report.fov.vertical.toFixed(1)}°{report.fov.calibrated?' (calibrated)':' (baseline)'}</p>
           <ul>{report.stages.map((stage,index)=><li key={index}><strong>{stage.name}</strong> · {stage.status==='applied'?'applied':stage.status==='fallback'?'fallback':'skipped'} · {stage.detail}</li>)}</ul>
         </details>}
+        {exportControl}
         {!persisted && <div className="capture-error" role="status">The stitched JPEG is available to download now, but local saving did not finish. Keep this page open and retry saving without stitching again. <button type="button" disabled={busy} onClick={()=>void retrySave()}><RotateCcw size={16}/> Retry save</button></div>}
         <section className="panorama-publish"><h2>Share this room</h2><p>Your captured frames stay on this device. Upload only the finished panorama when you're happy with the preview.</p>
           <div className="panorama-actions"><button type="button" className="outline" disabled={busy} onClick={()=>void upload()}>{busy?'Uploading or processing…':'Upload finished panorama'}</button>
@@ -106,6 +126,7 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
         {job?.state==='running' && !busy && <p role="status">Previous processing was interrupted. Your source frames remain saved; retry below.</p>}
         <button type="button" className="primary" disabled={busy||count!==37} onClick={()=>void stitch()}>{busy?'Processing on this device…':job?'Retry panorama':'Create panorama'}</button>
         {busy && <><label htmlFor="stitch-progress">{job?.message}</label><progress id="stitch-progress" max={100} value={progress}/></>}
+        {count>0 && exportControl}
       </div>}
     </section>
   </main>;

@@ -1,7 +1,7 @@
 import { Quaternion } from 'three';
 import { TARGETS, poseFromQuaternion } from './core';
 import type { SavedFrame } from './storage';
-import { VftcamStitcher, type StitchLayer } from './vftcam/stitcher.js';
+import { VftcamStitcher, type AlignInfo, type StitchLayer } from './vftcam/stitcher.js';
 import FovCalibrator from './vftcam/fov-calibrator.js';
 import { fillPolesSimple } from './vftcam/pole-fill-simple.js';
 
@@ -114,14 +114,34 @@ async function decode(frame: SavedFrame, width: number, height: number, worker: 
   }
 }
 
+// Why image alignment fell back, in words the Processing details list can show:
+// the exception, or the stage where computeImageAlignment returned null with its counts.
+export function alignmentFallbackDetail(failure: string | undefined, info: AlignInfo | null): string {
+  const parts = ['sensor poses used'];
+  if (failure) parts.push(`error: ${failure.slice('align failed: '.length)}`);
+  if (info) {
+    if (info.reason) parts.push(info.reason);
+    else if (!failure) parts.push(`stopped at ${info.stage}`);
+    else parts.push(`last stage ${info.stage}`);
+    if (info.corners) {
+      const c = [...info.corners].sort((x, y) => x - y);
+      parts.push(`corners per frame min ${c[0]} / median ${c[c.length >> 1]} / max ${c[c.length - 1]}, ${c.filter(v => v < 10).length} frames under 10`);
+    }
+    if (info.pairsTried !== undefined) parts.push(`${info.pairsMatched ?? 0}/${info.pairsTried} ordered pairs matched (${info.matchesKept ?? 0} of ${info.matchesFound ?? 0} matches kept)`);
+    if (info.focal?.length) parts.push(`consistent pairs per focal scale: ${info.focal.map(f => `x${f.focal.toFixed(2)} ${f.far}/${f.consistent}`).join(', ')}`);
+  } else if (!failure) parts.push('no diagnostics returned');
+  return parts.join('; ');
+}
+
 // The product stitch path: VFTCam's WebGL2 best-pixel pipeline (renderBestPixelPanorama
 // with image alignment, focal refinement, local warps, overlap exposure, vignetting,
 // routed seams, pole fill and sky reference). Never VFTCam's OpenCV startStitching route.
-export async function stitchRoom(frames: SavedFrame[], progress: Progress): Promise<StitchResult> {
+// `maxLongSide` lets a desktop replay of exported phone frames use the phone's cap (1280 on iOS).
+export async function stitchRoom(frames: SavedFrame[], progress: Progress, options: { maxLongSide?: number } = {}): Promise<StitchResult> {
   requireCompleteRoom(frames);
   const sorted = [...frames].sort((a, b) => a.targetId - b.targetId);
   const first = sorted[0];
-  const size = workingFrameSize(first.width, first.height, isIOS() ? 1280 : 1920);
+  const size = workingFrameSize(first.width, first.height, options.maxLongSide ?? (isIOS() ? 1280 : 1920));
   const aspect = first.height / first.width;
   for (const frame of sorted) if (Math.abs(frame.height / frame.width - aspect) > 0.01 * aspect)
     throw new Error(`Target ${frame.targetId} is ${frame.width} × ${frame.height}, but target ${first.targetId} is ${first.width} × ${first.height}. All 37 frames must share one camera shape; recapture this target.`);
@@ -177,8 +197,8 @@ export async function stitchRoom(frames: SavedFrame[], progress: Progress): Prom
     if (gl.isContextLost() || gl.getError() !== gl.NO_ERROR) throw new Error('GPU stitch failed; your source frames are intact.');
     const log = stitcher._stitchLog;
     const entry = (prefix: string) => log.find(line => line.startsWith(prefix));
-    const align = entry('align ');
-    stages.push(align && !align.includes('not applied') ? { name: 'Image alignment, focal refinement and local warps', status: 'applied', detail: align.slice(6) } : { name: 'Image alignment', status: 'fallback', detail: 'not applied; sensor poses used' });
+    const align = log.find(line => line.startsWith('align ') && !line.startsWith('align failed: '));
+    stages.push(align && !align.includes('not applied') ? { name: 'Image alignment, focal refinement and local warps', status: 'applied', detail: align.slice(6) } : { name: 'Image alignment', status: 'fallback', detail: alignmentFallbackDetail(entry('align failed: '), stitcher._alignInfo) });
     for (const zenith of log.filter(line => line.startsWith('Zenith '))) stages.push({ name: 'Zenith orientation', status: zenith.includes('recovered') ? 'applied' : 'skipped', detail: zenith });
     const gains = entry('gains ');
     stages.push(gains ? { name: 'Overlap exposure gains', status: 'applied', detail: gains.slice(6) } : { name: 'Exposure gains', status: 'fallback', detail: 'whole-frame brightness fallback' });

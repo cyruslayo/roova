@@ -8,7 +8,11 @@
 //     (indoor capture mode) instead of the browser's debug toggles;
 //   * the caller always passes the calibrated FOV, derived from the frames' real
 //     aspect ratio, so the 9:16 constants in the reference fallback are unused;
-//   * console logging is kept; the stage summary is returned in `_stitchLog`.
+//   * console logging is kept; the stage summary is returned in `_stitchLog`;
+//   * diagnostics only (no math change): computeImageAlignment records in
+//     `_alignInfo` why it returned null (corner, pair and match counts per
+//     stage), and an alignment exception is written to `_stitchLog` as
+//     `align failed: ...` so the product can show it instead of a silent fallback.
 import { computeSeamLabels, boxDown, whitePoint } from './seam-finder.js';
 import { recoverZenithRoll } from './zenith-alignment.js';
 import { Hotspots } from './hotspots.js';
@@ -23,6 +27,7 @@ export class VftcamStitcher {
         this._stitchLog = [];
         this._skyReference = null;
         this._zenithDiagnostics = [];
+        this._alignInfo = null;
     }
 
     // Exposure gains from overlaps: for every sphere direction two frames both
@@ -845,6 +850,7 @@ export class VftcamStitcher {
             }
           } catch (e) {
             console.warn('Image alignment failed, using sensor poses:', e);
+            this._stitchLog.push(`align failed: ${e?.name || 'Error'}: ${e?.message || e}`);
           }
         }
 
@@ -1248,7 +1254,8 @@ export class VftcamStitcher {
     // nothing was applied. Everything is deterministic.
     computeImageAlignment(layers, canvases, tanHalfHF, tanHalfVF) {
         const n = Math.min(layers.length, 40);
-        if (n < 3) return null;
+        const info = this._alignInfo = { stage: 'start', frames: n };
+        if (n < 3) { info.stage = 'too few frames'; return null; }
         this._zenithDiagnostics = recoverZenithRoll(layers, canvases, tanHalfHF, tanHalfVF);
         for (const d of this._zenithDiagnostics) {
             const message = `Zenith ${d.hotspotId}: ${d.accepted ? 'recovered' : 'uncertain; kept original'} roll ${d.originalRoll.toFixed(1)} -> ${d.roll.toFixed(1)} deg, correlation ${d.score.toFixed(2)}, margin ${d.margin.toFixed(2)}, support ${d.support}`;
@@ -1343,6 +1350,8 @@ export class VftcamStitcher {
             for (const key of [...buckets.keys()].sort((u, v) => u - v)) { const list = buckets.get(key); list.sort((u, v) => v[0] - u[0]); for (const c of list.slice(0, 4)) out.push([c[1], c[2]]); }
             return out;
         });
+        info.stage = 'corners';
+        info.corners = corners.map((c) => c.length);
 
         // Patch matching. A corner's 9x9 neighbourhood in frame i is projected
         // through both poses into frame j (so perspective is handled) and
@@ -1473,9 +1482,14 @@ export class VftcamStitcher {
         for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
             if (i === j || angle(mats[i][2], mats[j][2]) > maxSep) continue;
             const found = matchPair(i, j);
+            info.pairsTried = (info.pairsTried || 0) + 1;
+            info.matchesFound = (info.matchesFound || 0) + found.length;
             if (found.length >= 5) matches.set(i * n + j, found);
         }
-        if (!matches.size) return null;
+        info.stage = 'matching';
+        info.pairsMatched = matches.size;
+        info.matchesKept = [...matches.values()].reduce((s, f) => s + f.length, 0);
+        if (!matches.size) { info.reason = 'no overlapping pair had 5 or more patch matches'; return null; }
 
         // Gaussian elimination with partial pivoting; A (rows of Float64Array) and b are consumed.
         const solveDense = (A, b) => {
@@ -1581,6 +1595,7 @@ export class VftcamStitcher {
                 const ground = a.ground || b.ground;
                 meas.push({ i, j, ground, w: [0, 1, 2].map((c) => 0.5 * (a.w[c] - b.w[c])), n: a.n + b.n, weight: (ground ? 0.5 : 1) * Math.sqrt(a.n + b.n) });
             }
+            (info.focal ||= []).push({ focal, measured: measured.size, consistent: meas.length, far: meas.filter((e) => !e.ground).length });
             if (meas.filter((e) => !e.ground).length < 3) return null;
             // Pairs that disagree with the consensus (parallax) are dropped over a few rounds.
             let x = solve(meas), kept = meas;
@@ -1606,7 +1621,9 @@ export class VftcamStitcher {
             const score = near.reduce((s, e) => s + e.score, 0) / near.length;
             if (!best || score < best.score) { best = { ...results[k], score }; focal = scales[k]; }
         }
-        if (!best) return null;
+        info.stage = 'solve';
+        if (!best) { info.reason = 'no focal scale (with both neighbours) had 3 or more consistent above-horizon pairs'; return null; }
+        info.stage = 'applied';
         const { x, meas, kept } = best;
         const before = meas.reduce((s, e) => s + Math.hypot(...e.w), 0) / meas.length / D;
         const after = kept.reduce((s, e) => s + residual(x, e), 0) / Math.max(1, kept.length) / D;

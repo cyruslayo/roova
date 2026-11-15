@@ -14,3 +14,5 @@ app/*/tsconfig.tsbuildinfo
 video/*.mp4
 .cloudflare/
 app/web/e2e/out/
+# Exported real captures (user photos) for local replay only.
+app/web/e2e/fixtures/

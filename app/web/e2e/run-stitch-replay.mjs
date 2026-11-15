@@ -23,6 +23,20 @@ await page.goto('http://localhost:5179/e2e/stitch-replay.html');
 await page.waitForSelector('body[data-ready="1"]', { state: 'attached', timeout: 60000 });
 const ua = await page.evaluate(() => navigator.userAgent);
 const results = [];
+// Real capture: node e2e/run-stitch-replay.mjs e2e/out --recorded fixtures/<export>.zip
+const recordedAt = process.argv.indexOf('--recorded');
+if (recordedAt > 0) {
+  const zip = process.argv[recordedAt + 1];
+  console.log(`Recorded ${zip}`);
+  const r = await page.evaluate(u => window.runRecorded(u), `/e2e/${zip}`);
+  writeFileSync(`${out}/recorded.jpg`, Buffer.from(r.fullUrl.split(',')[1], 'base64'));
+  writeFileSync(`${out}/recorded-preview.jpg`, Buffer.from(r.previewUrl.split(',')[1], 'base64'));
+  delete r.fullUrl; delete r.previewUrl;
+  writeFileSync(`${out}/recorded.json`, JSON.stringify({ userAgent: ua, ...r }, null, 2));
+  console.log(JSON.stringify({ output: r.output, seconds: r.seconds, frameSize: r.frameSize, fov: r.fov, stages: r.stages }, null, 1));
+  await browser.close();
+  process.exit(0);
+}
 for (const c of cases) {
   console.log(`Case ${c.name}`);
   const r = await page.evaluate(o => window.runReplay(o), c.options);
