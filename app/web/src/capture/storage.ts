@@ -7,6 +7,7 @@ export type SavedFrame = {
 };
 
 export type SavedPanorama = { roomId: string; imageBlob: Blob; width: number; height: number; timestamp: string; sourceIds: number[] };
+type StoredPanorama = Omit<SavedPanorama, 'imageBlob'> & { imageBlob: Blob | null; fileName?: string };
 export type StitchJob = { roomId: string; state: 'running' | 'failed' | 'complete'; message: string; updatedAt: string };
 const DB_NAME = 'stillroom-capture';
 const STORE = 'frames';
@@ -46,32 +47,56 @@ async function record<T>(store: string, mode: IDBTransactionMode, operation: (ob
 export function loadStitchJob(roomId: string): Promise<StitchJob | undefined> { return record(JOBS,'readonly',store=>store.get(roomId)); }
 export function saveStitchJob(job: StitchJob): Promise<StitchJob> { return record(JOBS,'readwrite',store=>store.put(job)).then(()=>job); }
 
-async function opfsFile(roomId: string, create: boolean) {
+async function opfsFile(fileName: string, create: boolean) {
   if (!navigator.storage?.getDirectory) return null;
   const root=await navigator.storage.getDirectory();
   const dir=await root.getDirectoryHandle('stillroom-panoramas', {create});
-  return dir.getFileHandle(`${roomId.replace(/[^a-zA-Z0-9_-]/g,'_')}.jpg`,{create});
+  return dir.getFileHandle(fileName,{create});
+}
+
+async function writeInWorker(fileName: string, imageBlob: Blob): Promise<boolean> {
+  if (typeof Worker === 'undefined') return false;
+  let worker: Worker;
+  try { worker = new Worker(new URL('./opfs-panorama-worker.ts', import.meta.url), { type: 'module' }); }
+  catch { return false; }
+  try {
+    return await new Promise<boolean>(resolve => {
+      const timer = setTimeout(() => resolve(false), 60000);
+      worker.onmessage = event => { clearTimeout(timer); resolve(event.data.ok === true); };
+      worker.onerror = () => { clearTimeout(timer); resolve(false); };
+      worker.onmessageerror = () => { clearTimeout(timer); resolve(false); };
+      worker.postMessage({ fileName, imageBlob });
+    });
+  } finally { worker.terminate(); }
 }
 
 export async function savePanorama(panorama: SavedPanorama): Promise<void> {
   if(panorama.imageBlob.type!=='image/jpeg' || !panorama.imageBlob.size || panorama.width!==4096 || panorama.height!==2048)throw new Error('Invalid panorama output.');
-  // Store metadata first; the IndexedDB blob is a fallback on browsers without OPFS.
-  const usesOpfs=!!navigator.storage?.getDirectory;
-  if(usesOpfs) {
-    const handle=await opfsFile(panorama.roomId,true);
-    if(!handle)throw new Error('Device panorama storage is unavailable.');
-    const writer=await handle.createWritable();
-    try { await writer.write(panorama.imageBlob);await writer.close(); }
-    catch(error) {await writer.abort();throw error;}
+  // Each attempt uses a fresh file so a failed restitch never damages an older panorama.
+  const fileName = `${panorama.roomId.replace(/[^a-zA-Z0-9_-]/g,'_')}-${crypto.randomUUID()}.jpg`;
+  let written = false;
+  if (typeof navigator.storage?.getDirectory === 'function') {
+    try {
+      const handle = await opfsFile(fileName, true);
+      if (handle && typeof handle.createWritable === 'function') {
+        const writer = await handle.createWritable();
+        try { await writer.write(panorama.imageBlob); await writer.close(); written = true; }
+        catch (error) { await writer.abort().catch(() => {}); throw error; }
+      } else if (handle) {
+        written = await writeInWorker(fileName, panorama.imageBlob);
+      }
+    } catch { /* OPFS is optional; IndexedDB is the persistent fallback. */ }
   }
-  await record(PANORAMAS,'readwrite',store=>store.put({ ...panorama, imageBlob: usesOpfs ? null : panorama.imageBlob }));
+  await record(PANORAMAS,'readwrite',store=>store.put({ ...panorama, fileName: written ? fileName : undefined, imageBlob: written ? null : panorama.imageBlob } satisfies StoredPanorama));
 }
 
 export async function loadPanorama(roomId: string): Promise<SavedPanorama | null> {
-  const meta=await record<SavedPanorama | undefined>(PANORAMAS,'readonly',store=>store.get(roomId));
+  const meta=await record<StoredPanorama | undefined>(PANORAMAS,'readonly',store=>store.get(roomId));
   if(!meta)return null;
-  if(meta.imageBlob)return meta;
-  try { const file=await (await opfsFile(roomId,false))?.getFile();return file?{...meta,imageBlob:file}:null; }
+  if(meta.imageBlob)return { ...meta, imageBlob: meta.imageBlob };
+  // Older panoramas used the room ID itself as the OPFS filename.
+  const fileName = meta.fileName ?? `${roomId.replace(/[^a-zA-Z0-9_-]/g,'_')}.jpg`;
+  try { const file=await (await opfsFile(fileName,false))?.getFile();return file?{...meta,imageBlob:file}:null; }
   catch { return null; }
 }
 

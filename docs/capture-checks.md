@@ -1,5 +1,12 @@
 # Slice 1 capture checks (2026-11-15)
 
+## Safari panorama-save follow-up (2026-11-15)
+
+- **Reported physical result:** iPhone XS Max / Safari (versions not supplied): after all 37 targets, stitching reached local panorama storage and failed with `t.createWritable is not a function`. Actual saved output dimensions and visual stitch quality remain unverified. The 37 original IndexedDB frames were not deleted by this path.
+- **Source cause:** `savePanorama` tested only `navigator.storage.getDirectory`, then called `FileSystemFileHandle.createWritable` unconditionally. This does not imply that Safari exposes writable file streams. The fix checks the file handle, uses a dedicated worker with `createSyncAccessHandle` where supported, and persists the blob in the existing room-scoped IndexedDB store if OPFS cannot write. Each new OPFS save uses a unique filename, so a failed restitch cannot overwrite an older saved panorama. The UI keeps an encoded JPEG available for download and **Retry save** without re-stitching if local persistence fails.
+- **Browser regression checks (Windows headless Chrome, not Safari):** reproduced the exact `handle.createWritable is not a function` message with `getDirectory` present and a file handle lacking that method. With worker unavailable, IndexedDB fallback saved a blob with all 37 source IDs and restored it after reload. With a wrapped main-thread file handle lacking `createWritable`, worker-based synchronous OPFS writing saved and restored the file after reload. No actual Safari worker test is available here.
+- **Retry UI fixture (Windows headless Chrome):** forced the panorama IndexedDB write to throw `QuotaExceededError` after a 37-frame stitch. The 4096 × 2048 preview and download remained available with **Retry save**. Removing the simulated failure and retrying saved the same JPEG without restitching; it restored after a reload. No page exceptions.
+
 Status: user reports 37 guided captures on iPhone XS Max/Safari; JPEG metadata and reload were not recorded. Android capture and real-phone stitching remain **unverified**. Do not close slices from desktop simulation alone.
 
 ## Full-room handoff and panorama test build (2026-11-15)

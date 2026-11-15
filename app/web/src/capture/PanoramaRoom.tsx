@@ -9,11 +9,12 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
   const [tour,setTour]=useState<Tour | null>(null),[panorama,setPanorama]=useState<SavedPanorama | null>(null);
   const [room,setRoom]=useState<Room | null>(null),[uploadProgress,setUploadProgress]=useState(0);
   const [job,setJob]=useState<StitchJob | null>(null),[count,setCount]=useState(0),[progress,setProgress]=useState(0);
+  const [persisted,setPersisted]=useState(false);
   const [error,setError]=useState(''),[busy,setBusy]=useState(false),[ready,setReady]=useState(false);
   const refresh=useCallback(async()=>{
     try {
       const [result,frames,saved,previous]=await Promise.all([api.room(roomId),loadFrames(roomId),loadPanorama(roomId),loadStitchJob(roomId)]);
-      setTour(result.tour);setRoom(result.room);setCount(frames.length);setPanorama(saved);setJob(previous??null);setReady(true);setError('');
+      setTour(result.tour);setRoom(result.room);setCount(frames.length);setPanorama(saved);setPersisted(!!saved);setJob(previous??null);setReady(true);setError('');
     } catch(e) {setError(e instanceof Error?e.message:'Could not restore this room.');setReady(false);}
   },[roomId]);
   useEffect(()=>{void refresh();},[refresh]);
@@ -26,15 +27,27 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
       await saveStitchJob(running);setJob(running);
       const jpeg=await stitchRoom(frames,(value,message)=>{setProgress(value);setJob({...running,message});});
       const result:SavedPanorama={roomId,imageBlob:jpeg,width:4096,height:2048,timestamp:new Date().toISOString(),sourceIds:frames.map(frame=>frame.targetId)};
+      setPanorama(result);setPersisted(false);
       await savePanorama(result);
+      setPersisted(true);
       const done:StitchJob={roomId,state:'complete',message:'Panorama ready',updatedAt:new Date().toISOString()};
       await saveStitchJob(done);setJob(done);setPanorama(result);
     } catch(e) {
       const message=e instanceof Error?e.message:'Panorama preparation failed.';
-      setError(message);
+      setError(panorama ? message : `Panorama processing or local save failed: ${message}`);
       const failed:StitchJob={roomId,state:'failed',message,updatedAt:new Date().toISOString()};
       try{await saveStitchJob(failed);setJob(failed);}catch{/* preserve original error */}
     } finally{setBusy(false);}
+  };
+  const retrySave=async()=>{
+    if(!panorama||busy)return;
+    setBusy(true);setError('');
+    try {
+      await savePanorama(panorama);setPersisted(true);
+      const done:StitchJob={roomId,state:'complete',message:'Panorama saved on this device',updatedAt:new Date().toISOString()};
+      await saveStitchJob(done);setJob(done);
+    } catch(e){setError(e instanceof Error?`Could not save panorama locally: ${e.message}`:'Could not save panorama locally.');}
+    finally{setBusy(false);}
   };
   const download=()=>{
     if(!panorama)return;
@@ -71,11 +84,12 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
     <header className="capture-header"><a href={`/studio/capture/${encodeURIComponent(roomId)}`}><ArrowLeft size={18}/> Capture</a><strong>stillroom<span>.</span></strong><span className="capture-private">ON-DEVICE PANORAMA</span></header>
     <section className="panorama-workspace"><span className="section-overline">ROOM / {tour?.roomName??'Loading…'}</span><h1>Your room, all around.</h1>
       {!ready && !error && <p role="status">Loading saved room images…</p>}
-      {error && <div className="capture-error" role="alert"><ShieldAlert size={20}/>{error}<button type="button" onClick={()=>void refresh()}><RotateCcw size={16}/> Reload</button></div>}
+      {error && <div className="capture-error" role="alert"><ShieldAlert size={20}/>{error}{!panorama && <button type="button" onClick={()=>void refresh()}><RotateCcw size={16}/> Reload</button>}</div>}
       {panorama ? <>
         <PanoramaViewer image={panorama.imageBlob} name={tour?.roomName??'room'}/>
-        <p role="status"><Check size={17}/> {panorama.width} × {panorama.height} JPEG · {panorama.sourceIds.length} saved frames · drag to explore</p>
+        <p role="status"><Check size={17}/> {panorama.width} × {panorama.height} JPEG · {panorama.sourceIds.length} saved frames · drag to explore{persisted?' · saved on this device':' · not yet saved on this device'}</p>
         <div className="panorama-actions"><button className="primary" type="button" onClick={download}><Download size={18}/> Save JPEG</button><button type="button" className="outline" disabled={busy} onClick={()=>void stitch()}><RotateCcw size={16}/> Restitch from originals</button></div>
+        {!persisted && <div className="capture-error" role="status">The stitched JPEG is available to download now, but local saving did not finish. Keep this page open and retry saving without stitching again. <button type="button" disabled={busy} onClick={()=>void retrySave()}><RotateCcw size={16}/> Retry save</button></div>}
         <section className="panorama-publish"><h2>Share this room</h2><p>Your captured frames stay on this device. Upload only the finished panorama when you're happy with the preview.</p>
           <div className="panorama-actions"><button type="button" className="outline" disabled={busy} onClick={()=>void upload()}>{busy?'Uploading or processing…':'Upload finished panorama'}</button>
             {room?.pending && <button type="button" className="primary" disabled={busy} onClick={()=>void publish()}>Publish room</button>}</div>
