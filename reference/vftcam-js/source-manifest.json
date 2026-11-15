@@ -1,0 +1,258 @@
+{
+  "source": "https://360cam.stanford.edu/",
+  "capturedAt": "2026-11-15T09:16:10.233Z",
+  "files": [
+    {
+      "path": "js/ext/three.min.js",
+      "url": "https://360cam.stanford.edu/js/ext/three.min.js",
+      "bytes": 603445
+    },
+    {
+      "path": "js/ext/pannellum.js",
+      "url": "https://360cam.stanford.edu/js/ext/pannellum.js",
+      "bytes": 56249
+    },
+    {
+      "path": "js/ext/piexif.min.js",
+      "url": "https://360cam.stanford.edu/js/ext/piexif.min.js",
+      "bytes": 30052
+    },
+    {
+      "path": "js/capture.js",
+      "url": "https://360cam.stanford.edu/js/capture.js",
+      "bytes": 28062
+    },
+    {
+      "path": "js/modules/app.js",
+      "url": "https://360cam.stanford.edu/js/modules/app.js",
+      "bytes": 231137
+    },
+    {
+      "path": "js/modules/database.js",
+      "url": "https://360cam.stanford.edu/js/modules/database.js",
+      "bytes": 29134
+    },
+    {
+      "path": "js/modules/camera.js",
+      "url": "https://360cam.stanford.edu/js/modules/camera.js",
+      "bytes": 8490
+    },
+    {
+      "path": "js/modules/scene.js",
+      "url": "https://360cam.stanford.edu/js/modules/scene.js",
+      "bytes": 38076
+    },
+    {
+      "path": "js/modules/seam-finder.js",
+      "url": "https://360cam.stanford.edu/js/modules/seam-finder.js",
+      "bytes": 26925
+    },
+    {
+      "path": "js/modules/capture-orientation.js",
+      "url": "https://360cam.stanford.edu/js/modules/capture-orientation.js",
+      "bytes": 1729
+    },
+    {
+      "path": "js/modules/zenith-alignment.js",
+      "url": "https://360cam.stanford.edu/js/modules/zenith-alignment.js",
+      "bytes": 5271
+    },
+    {
+      "path": "js/modules/hotspots.js",
+      "url": "https://360cam.stanford.edu/js/modules/hotspots.js",
+      "bytes": 4445
+    },
+    {
+      "path": "js/modules/fov-estimator.js",
+      "url": "https://360cam.stanford.edu/js/modules/fov-estimator.js",
+      "bytes": 9576
+    },
+    {
+      "path": "js/modules/fov-calibrator.js",
+      "url": "https://360cam.stanford.edu/js/modules/fov-calibrator.js",
+      "bytes": 13479
+    },
+    {
+      "path": "js/modules/manual-fov-test.js",
+      "url": "https://360cam.stanford.edu/js/modules/manual-fov-test.js",
+      "bytes": 5078
+    },
+    {
+      "path": "js/modules/stitching.js",
+      "url": "https://360cam.stanford.edu/js/modules/stitching.js",
+      "bytes": 13392
+    },
+    {
+      "path": "js/modules/memory-utils.js",
+      "url": "https://360cam.stanford.edu/js/modules/memory-utils.js",
+      "bytes": 20691
+    },
+    {
+      "path": "js/modules/debug.js",
+      "url": "https://360cam.stanford.edu/js/modules/debug.js",
+      "bytes": 17598
+    },
+    {
+      "path": "js/modules/metadata-utils.js",
+      "url": "https://360cam.stanford.edu/js/modules/metadata-utils.js",
+      "bytes": 12556
+    },
+    {
+      "path": "js/modules/camera-roll.js",
+      "url": "https://360cam.stanford.edu/js/modules/camera-roll.js",
+      "bytes": 50085
+    },
+    {
+      "path": "js/modules/card-ui.js",
+      "url": "https://360cam.stanford.edu/js/modules/card-ui.js",
+      "bytes": 104824
+    },
+    {
+      "path": "js/modules/pixelated-transition.js",
+      "url": "https://360cam.stanford.edu/js/modules/pixelated-transition.js",
+      "bytes": 7123
+    },
+    {
+      "path": "js/modules/share-utils.js",
+      "url": "https://360cam.stanford.edu/js/modules/share-utils.js",
+      "bytes": 17000
+    },
+    {
+      "path": "js/modules/frame-export.js",
+      "url": "https://360cam.stanford.edu/js/modules/frame-export.js",
+      "bytes": 3218
+    },
+    {
+      "path": "js/modules/device-detector.js",
+      "url": "https://360cam.stanford.edu/js/modules/device-detector.js",
+      "bytes": 14933
+    },
+    {
+      "path": "js/modules/pole-fill-simple.js",
+      "url": "https://360cam.stanford.edu/js/modules/pole-fill-simple.js",
+      "bytes": 12457
+    },
+    {
+      "path": "js/modules/permissions.js",
+      "url": "https://360cam.stanford.edu/js/modules/permissions.js",
+      "bytes": 42111
+    },
+    {
+      "path": "js/modules/stitch-processor.js",
+      "url": "https://360cam.stanford.edu/js/modules/stitch-processor.js",
+      "bytes": 17503
+    },
+    {
+      "path": "js/modules/opencv-utils.js",
+      "url": "https://360cam.stanford.edu/js/modules/opencv-utils.js",
+      "bytes": 5519
+    },
+    {
+      "path": "js/modules/multi-stitcher.js",
+      "url": "https://360cam.stanford.edu/js/modules/multi-stitcher.js",
+      "bytes": 27075
+    },
+    {
+      "path": "js/modules/opfs-storage.js",
+      "url": "https://360cam.stanford.edu/js/modules/opfs-storage.js",
+      "bytes": 8087
+    },
+    {
+      "path": "js/modules/vr-viewer.js",
+      "url": "https://360cam.stanford.edu/js/modules/vr-viewer.js",
+      "bytes": 28674
+    },
+    {
+      "path": "js/modules/image-manager.js",
+      "url": "https://360cam.stanford.edu/js/modules/image-manager.js",
+      "bytes": 11539
+    },
+    {
+      "path": "js/modules/settings.js",
+      "url": "https://360cam.stanford.edu/js/modules/settings.js",
+      "bytes": 14007
+    },
+    {
+      "path": "js/modules/worker-client.js",
+      "url": "https://360cam.stanford.edu/js/modules/worker-client.js",
+      "bytes": 9993
+    },
+    {
+      "path": "js/workers/opfs-worker.js",
+      "url": "https://360cam.stanford.edu/js/workers/opfs-worker.js",
+      "bytes": 5963
+    },
+    {
+      "path": "js/modules/stitch-recovery.js",
+      "url": "https://360cam.stanford.edu/js/modules/stitch-recovery.js",
+      "bytes": 15260
+    },
+    {
+      "path": "service-worker.js",
+      "url": "https://360cam.stanford.edu/service-worker.js",
+      "bytes": 9605
+    },
+    {
+      "path": "sw.js",
+      "url": "https://360cam.stanford.edu/sw.js",
+      "bytes": 284
+    },
+    {
+      "path": "js/modules/compass-utils.js",
+      "url": "https://360cam.stanford.edu/js/modules/compass-utils.js",
+      "bytes": 7520
+    },
+    {
+      "path": "js/modules/simple-aligner.js",
+      "url": "https://360cam.stanford.edu/js/modules/simple-aligner.js",
+      "bytes": 8976
+    },
+    {
+      "path": "js/modules/pwa-status.js",
+      "url": "https://360cam.stanford.edu/js/modules/pwa-status.js",
+      "bytes": 10375
+    },
+    {
+      "path": "js/ext/jszip.min.js",
+      "url": "https://360cam.stanford.edu/js/ext/jszip.min.js",
+      "bytes": 97630
+    },
+    {
+      "path": "js/workers/stitch-worker.js",
+      "url": "https://360cam.stanford.edu/js/workers/stitch-worker.js",
+      "bytes": 9716
+    },
+    {
+      "path": "inline/inline-1.js",
+      "url": "https://360cam.stanford.edu/#inline-script-1",
+      "bytes": 854
+    },
+    {
+      "path": "inline/inline-2.js",
+      "url": "https://360cam.stanford.edu/#inline-script-2",
+      "bytes": 3443
+    }
+  ],
+  "errors": [
+    {
+      "url": "https://360cam.stanford.edu/examples/jsm/utils/SceneUtils.js",
+      "error": "Error: HTTP 404"
+    },
+    {
+      "url": "https://360cam.stanford.edu/examples/jsm/objects/Lensflare.js",
+      "error": "Error: HTTP 404"
+    },
+    {
+      "url": "https://360cam.stanford.edu/js/service-worker.js",
+      "error": "Error: HTTP 404"
+    },
+    {
+      "url": "https://360cam.stanford.edu/js/modules/opencv-stitcher.js",
+      "error": "Error: HTTP 404"
+    },
+    {
+      "url": "https://360cam.stanford.edu/js/modules/js/ext/jszip.min.js",
+      "error": "Error: HTTP 404"
+    }
+  ]
+}

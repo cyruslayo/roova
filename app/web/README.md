@@ -29,6 +29,7 @@ Do not set `LOCAL_DEV_KEY` for a deployed frontend.
 - `/studio` — tour list and operator workflow.
 - `/studio/demo/:tourId` or `/studio/demo?id=<tourId>` — authenticated private review route. It calls `GET /api/tours/:id` and uses the returned review `scene` URLs; private staging assets must be served by the API only to the owning operator. It never requests unpublished assets from the public-tour endpoint.
 - `/studio/demo?slug=<published-slug>` — public visitor preview for an already published tour; defaults to `demo`.
+- `/studio/capture/:tourId` — authenticated room capture session for the selected tour's room. Camera and motion are requested from separate tap actions; JPEG source frames and pose are saved in this browser's IndexedDB under the tour ID. Reopening the URL restores the captured frame and marker. No frame is uploaded or stitched from this page.
 
 ## Build and checks
 
