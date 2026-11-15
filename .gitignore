@@ -1,0 +1,14 @@
+node_modules/
+.runs/
+.env
+.env.*
+!.env.example
+prepared/
+*.log
+app/*/dist/
+app/*/.wrangler/
+app/*/processor-output/
+app/*/processor-jobs/
+app/*/.dev.vars
+app/*/tsconfig.tsbuildinfo
+video/*.mp4

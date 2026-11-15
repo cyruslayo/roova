@@ -1,0 +1,27 @@
+name = "property-tour-api"
+main = "src/index.ts"
+compatibility_date = "2026-11-13"
+
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/t/*", "/studio", "/studio/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "property-tour"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "property-tour-private"
+
+[vars]
+AUTH_MODE = "access"
+UPLOAD_PART_SIZE = "8388608"
+MAX_UPLOAD_BYTES = "1073741824"
+ACCESS_AUD = ""
+ACCESS_TEAM_DOMAIN = ""
+
+# Set PROCESSOR_SECRET using `wrangler secret put PROCESSOR_SECRET`; never commit it.

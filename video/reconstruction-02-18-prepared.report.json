@@ -1,0 +1,51 @@
+{
+  "preparedAt": "2026-11-13T14:40:28.800Z",
+  "source": {
+    "path": "C:\\AI2026\\property-tour\\video\\reconstruction-02-18.mp4",
+    "file": "reconstruction-02-18.mp4",
+    "durationSeconds": 16,
+    "bytes": 105524615,
+    "megabytes": 105.52,
+    "video": {
+      "codec": "h264",
+      "width": 3840,
+      "height": 2160,
+      "fps": 60,
+      "pixFmt": "yuv420p"
+    },
+    "audioPresent": false
+  },
+  "segment": {
+    "startSeconds": 0,
+    "durationSeconds": 16
+  },
+  "output": {
+    "path": "C:\\AI2026\\property-tour\\video\\reconstruction-02-18-prepared.mp4",
+    "file": "reconstruction-02-18-prepared.mp4",
+    "durationSeconds": 16,
+    "bytes": 7606986,
+    "megabytes": 7.61,
+    "video": {
+      "codec": "h264",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "pixFmt": "yuv420p"
+    },
+    "audioPresent": false
+  },
+  "encoding": {
+    "crf": 23,
+    "w": 1920,
+    "h": 1080
+  },
+  "policy": {
+    "maxPreparedMB": 95,
+    "maxDurationSeconds": 30
+  },
+  "notes": [
+    "Original file was not changed.",
+    "Selection is manual; this script does not find the best scene interval.",
+    "Review output visually before running a paid generation."
+  ]
+}

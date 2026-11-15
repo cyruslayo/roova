@@ -1,0 +1,15 @@
+{
+  "path": "/mnt/data/sample.mp4",
+  "file": "sample.mp4",
+  "durationSeconds": 13.233333,
+  "bytes": 3918687,
+  "megabytes": 3.92,
+  "video": {
+    "codec": "h264",
+    "width": 408,
+    "height": 720,
+    "fps": 30,
+    "pixFmt": "yuv420p"
+  },
+  "audioPresent": false
+}

@@ -1,0 +1,9 @@
+PRAGMA foreign_keys = ON;
+CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, role TEXT NOT NULL DEFAULT 'operator', created_at TEXT NOT NULL);
+CREATE TABLE tours (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL, room_name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE, state TEXT NOT NULL DEFAULT 'draft', active_scene_version TEXT, published_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, failure_reason TEXT);
+CREATE INDEX tours_owner ON tours(owner_id, updated_at DESC);
+CREATE TABLE uploads (id TEXT PRIMARY KEY, tour_id TEXT NOT NULL REFERENCES tours(id), r2_key TEXT NOT NULL UNIQUE, provider_upload_id TEXT NOT NULL, bytes INTEGER NOT NULL, mime TEXT NOT NULL, file_name TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, completed_at TEXT, UNIQUE(tour_id, id));
+CREATE TABLE upload_parts (upload_id TEXT NOT NULL REFERENCES uploads(id) ON DELETE CASCADE, part_number INTEGER NOT NULL, etag TEXT NOT NULL, PRIMARY KEY(upload_id, part_number));
+CREATE TABLE generation_jobs (id TEXT PRIMARY KEY, tour_id TEXT NOT NULL REFERENCES tours(id), upload_id TEXT NOT NULL REFERENCES uploads(id), dedupe_key TEXT NOT NULL UNIQUE, state TEXT NOT NULL DEFAULT 'queued', lease_owner TEXT, lease_until INTEGER, attempts INTEGER NOT NULL DEFAULT 0, provider_operation_id TEXT, world_id TEXT, provider_error TEXT, duration_seconds REAL, provider_bytes INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX jobs_lease ON generation_jobs(state, lease_until);
+CREATE TABLE scene_versions (id TEXT PRIMARY KEY, tour_id TEXT NOT NULL REFERENCES tours(id), world_id TEXT, poster_key TEXT, panorama_key TEXT, small_spz_key TEXT, large_spz_key TEXT, spatial_json TEXT, review_status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL);
