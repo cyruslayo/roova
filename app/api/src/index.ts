@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 
-type Env = { DB: D1Database; MEDIA: R2Bucket; ASSETS: Fetcher; AUTH_MODE?: string; ACCESS_AUD?: string; ACCESS_TEAM_DOMAIN?: string; UPLOAD_PART_SIZE?: string; MAX_UPLOAD_BYTES?: string; PROCESSOR_SECRET?: string };
+export type Env = { DB: D1Database; MEDIA: R2Bucket; ASSETS: Fetcher; AUTH_MODE?: string; ACCESS_AUD?: string; ACCESS_TEAM_DOMAIN?: string; UPLOAD_PART_SIZE?: string; MAX_UPLOAD_BYTES?: string; PROCESSOR_SECRET?: string };
 type Vars = { user: string };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 const now = () => new Date().toISOString();

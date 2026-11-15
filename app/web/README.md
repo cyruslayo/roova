@@ -38,4 +38,6 @@ npm run build
 npm test
 ```
 
+For phone testing on the protected Cloudflare Pages preview, see `../../docs/pages-staging.md`. `npm run build:pages` builds the Vite shell and the same-origin API adapter into Pages Advanced Mode output; the standard `npm run build` continues to build only the web shell.
+
 The private review route uses operator-authorized poster/panorama/SPZ URLs and can play the original source video. It offers 100k and 500k scene inspection without publishing. See `../README.md` for importing the existing reconstruction locally. Tour state is read from `tour.state`; job state from `job.state`. An unavailable public tour does not show an unrelated property image. Multipart upload checkpoints are stored locally and revalidated with the API when the same file is selected after a reload; interrupted-part recovery was exercised in local Chromium. Physical-device rendering and deployment Access policies remain unverified.
