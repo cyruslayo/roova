@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TARGETS } from './core';
-import { requireCompleteRoom } from './stitch';
+import { baselineFov, requireCompleteRoom, stitchPose, workingFrameSize } from './stitch';
 import type { SavedFrame } from './storage';
 
 const frame = (targetId: number): SavedFrame => ({
@@ -20,5 +20,31 @@ describe('complete room gate',()=>{
     expect(()=>requireCompleteRoom(frames)).not.toThrow();
     frames[36].pose.pitch=NaN;
     expect(()=>requireCompleteRoom(frames)).toThrow(/Target 37/);
+  });
+});
+
+describe('frame geometry preparation', () => {
+  it('keeps the source aspect when resizing frames for the GPU', () => {
+    expect(workingFrameSize(1080, 1920, 1280)).toEqual({ width: 720, height: 1280 });
+    expect(workingFrameSize(1080, 1920, 1920)).toEqual({ width: 1080, height: 1920 });
+    expect(workingFrameSize(1080, 1440, 1280)).toEqual({ width: 960, height: 1280 });
+    const { width, height } = workingFrameSize(1079, 1917, 1280);
+    expect(height / width).toBeCloseTo(1917 / 1079, 2);
+  });
+  it('derives the vertical field of view from the real frame shape, matching VFTCam at 9:16', () => {
+    const portrait = baselineFov(720, 1280);
+    expect(portrait.horizontal).toBeCloseTo(43.2, 6);
+    expect(portrait.vertical).toBeCloseTo(70.28, 2);
+    const fourThree = baselineFov(960, 1280);
+    expect(fourThree.vertical).toBeCloseTo(70.28, 2);
+    expect(Math.tan(fourThree.horizontal * Math.PI / 360) / Math.tan(fourThree.vertical * Math.PI / 360)).toBeCloseTo(960 / 1280, 6);
+  });
+  it('re-derives the stitch pose from the stored capture quaternion', () => {
+    const f = frame(13);
+    f.pose = { ...f.pose, yaw: 999, orientationQuaternion: [0, 1, 0, 0] };
+    const pose = stitchPose(f);
+    expect(pose.hasFullOrientation).toBe(true);
+    expect(pose.yaw).toBeCloseTo(0, 6);
+    expect(pose.pitch).toBeCloseTo(0, 6);
   });
 });

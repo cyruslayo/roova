@@ -13,3 +13,4 @@ app/*/.dev.vars
 app/*/tsconfig.tsbuildinfo
 video/*.mp4
 .cloudflare/
+app/web/e2e/out/

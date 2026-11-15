@@ -1,5 +1,7 @@
 // Browser worker for sequential frame decode/resize. Falls back to main-thread
 // preparation on Safari versions without worker OffscreenCanvas support.
+// The caller passes a size with the frame's own aspect ratio, so the resize
+// keeps the relationship between pixels and the camera's field of view.
 self.onmessage = async (event: MessageEvent<{ id: number; image: Blob; width: number; height: number }>) => {
   const {id,image,width,height}=event.data;
   let bitmap:ImageBitmap | null=null;
@@ -9,7 +11,7 @@ self.onmessage = async (event: MessageEvent<{ id: number; image: Blob; width: nu
     if(!ctx)throw new Error('Worker canvas unavailable');
     ctx.drawImage(bitmap,0,0,width,height);
     const pixels=ctx.getImageData(0,0,width,height).data;
-    (self as unknown as {postMessage:(data:unknown,transfer:Transferable[])=>void}).postMessage({id,pixels:pixels.buffer},[pixels.buffer as ArrayBuffer]);
+    (self as unknown as {postMessage:(data:unknown,transfer:Transferable[])=>void}).postMessage({id,pixels:pixels.buffer,sourceWidth:bitmap.width,sourceHeight:bitmap.height},[pixels.buffer as ArrayBuffer]);
   } catch(error) {self.postMessage({id,error:error instanceof Error?error.message:'Frame preparation failed'});}
   finally {bitmap?.close();}
 };

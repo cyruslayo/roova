@@ -2,14 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, Check, Download, RotateCcw, ShieldAlert } from 'lucide-react';
 import { api, type PanoramaRoom as Room, type Tour } from '../api';
 import { loadFrames, loadPanorama, loadStitchJob, savePanorama, saveStitchJob, type SavedPanorama, type StitchJob } from './storage';
-import { requireCompleteRoom, stitchRoom } from './stitch';
+import { requireCompleteRoom, stitchRoom, type StitchResult } from './stitch';
 import PanoramaViewer from './PanoramaViewer';
 
 export default function PanoramaRoom({roomId}:{roomId:string}) {
   const [tour,setTour]=useState<Tour | null>(null),[panorama,setPanorama]=useState<SavedPanorama | null>(null);
   const [room,setRoom]=useState<Room | null>(null),[uploadProgress,setUploadProgress]=useState(0);
   const [job,setJob]=useState<StitchJob | null>(null),[count,setCount]=useState(0),[progress,setProgress]=useState(0);
-  const [persisted,setPersisted]=useState(false);
+  const [persisted,setPersisted]=useState(false),[report,setReport]=useState<StitchResult | null>(null);
   const [error,setError]=useState(''),[busy,setBusy]=useState(false),[ready,setReady]=useState(false);
   const refresh=useCallback(async()=>{
     try {
@@ -25,8 +25,9 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
       const frames=await loadFrames(roomId);requireCompleteRoom(frames);
       const running:StitchJob={roomId,state:'running',message:'Preparing frames',updatedAt:new Date().toISOString()};
       await saveStitchJob(running);setJob(running);
-      const jpeg=await stitchRoom(frames,(value,message)=>{setProgress(value);setJob({...running,message});});
-      const result:SavedPanorama={roomId,imageBlob:jpeg,width:4096,height:2048,timestamp:new Date().toISOString(),sourceIds:frames.map(frame=>frame.targetId)};
+      const stitched=await stitchRoom(frames,(value,message)=>{setProgress(value);setJob({...running,message});});
+      setReport(stitched);
+      const result:SavedPanorama={roomId,imageBlob:stitched.blob,width:stitched.width,height:stitched.height,timestamp:new Date().toISOString(),sourceIds:frames.map(frame=>frame.targetId)};
       setPanorama(result);setPersisted(false);
       await savePanorama(result);
       setPersisted(true);
@@ -89,6 +90,10 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
         <PanoramaViewer image={panorama.imageBlob} name={tour?.roomName??'room'}/>
         <p role="status"><Check size={17}/> {panorama.width} × {panorama.height} JPEG · {panorama.sourceIds.length} saved frames · drag to explore{persisted?' · saved on this device':' · not yet saved on this device'}</p>
         <div className="panorama-actions"><button className="primary" type="button" onClick={download}><Download size={18}/> Save JPEG</button><button type="button" className="outline" disabled={busy} onClick={()=>void stitch()}><RotateCcw size={16}/> Restitch from originals</button></div>
+        {report && <details className="panorama-report"><summary>Processing details</summary>
+          <p>Source frames {report.sourceSize.width} × {report.sourceSize.height}, processed at {report.frameSize.width} × {report.frameSize.height} · field of view {report.fov.horizontal.toFixed(1)}° × {report.fov.vertical.toFixed(1)}°{report.fov.calibrated?' (calibrated)':' (baseline)'}</p>
+          <ul>{report.stages.map((stage,index)=><li key={index}><strong>{stage.name}</strong> · {stage.status==='applied'?'applied':stage.status==='fallback'?'fallback':'skipped'} · {stage.detail}</li>)}</ul>
+        </details>}
         {!persisted && <div className="capture-error" role="status">The stitched JPEG is available to download now, but local saving did not finish. Keep this page open and retry saving without stitching again. <button type="button" disabled={busy} onClick={()=>void retrySave()}><RotateCcw size={16}/> Retry save</button></div>}
         <section className="panorama-publish"><h2>Share this room</h2><p>Your captured frames stay on this device. Upload only the finished panorama when you're happy with the preview.</p>
           <div className="panorama-actions"><button type="button" className="outline" disabled={busy} onClick={()=>void upload()}>{busy?'Uploading or processing…':'Upload finished panorama'}</button>

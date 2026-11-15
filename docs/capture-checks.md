@@ -1,5 +1,32 @@
 # Slice 1 capture checks (2026-11-15)
 
+## Slice 2 stitch geometry repair (2026-11-15)
+
+**Source defects fixed** (from the stitch audit): (1) the product shader replaced VFTCam's projection while keeping VFTCam's quaternion→pose conversion, so off-center image points sampled mirrored positions; (2) every frame was stretched to 512 × 768 (2:3) and vertical FOV derived from that ratio; (3) alignment, focal refinement, local warps, overlap exposure, vignetting, routed seams, pole fill and zenith recovery were missing or approximated; (4) a fixed latitude clamp left the nadir unfilled.
+
+**Change:** `stitchRoom()` (`app/web/src/capture/stitch.ts`) now runs VFTCam's WebGL2 `renderBestPixelPanorama` with its stages, copied into `app/web/src/capture/vftcam/` (see `THIRD_PARTY_NOTICES.md`), then `fillPolesSimple` and the sky/broad-tone reference, as in `performBestPixelStitching`. Frames are resized with their own aspect (long side 1280 on iOS, 1920 elsewhere, as VFTCam's capture resolutions); frames with mismatched shapes or a decoded size that disagrees with the stored one stop the stitch with a message instead of being stretched. Poses are re-derived from each frame's stored quaternion. The FOV prior is VFTCam's 70.28° along the long side (= 43.2° short side at 9:16); the short side follows the real aspect, and FovCalibrator searches VFTCam's 41–46° range offset to that shape. Image alignment's focal refinement then adjusts it. The panorama page shows a **Processing details** list of every stage as applied, fallback or skipped. Entry points: Create / Retry / Restitch in `PanoramaRoom.tsx` → `stitchRoom()` only; no product control reaches `startStitching()`.
+
+**Assumption, not verified:** that phone cameras keep the long-side FOV across aspect ratios. If a phone's 3:4 stream is instead cropped from the long side, the prior is wrong by ~28% in focal length and the stitch fails (see the control case below). Real phone frame dimensions and FOV still need recording.
+
+**Numerical check** (`src/capture/stitch-geometry.test.ts`): 10 asymmetric image points × 37 targets, aspects 9:16 and 3:4, roll 0/±5°: capture quaternion → world → ERP pixel as `PanoramaViewer` displays it → shipped `projectToCamera`: **370/370 per case** recover their source pixel.
+
+**GPU replay** (`app/web/e2e/stitch-replay.*`, HeadlessChrome 153 Linux, SwiftShader WebGL2 — not a phone, not a real room): a procedural room with asymmetric textured content rendered into 37 JPEG frames, stitched by the product `stitchRoom()`. All outputs **4096 × 2048**, no black pixels in any band, ~17–19 s. Mean absolute error /255 (fraction within 20) by latitude band, ceiling / upper / equator / lower / floor:
+
+| Case | Error | Mirrored control |
+|---|---|---|
+| exact poses, 720 × 1280 | 9.0 (0.95) / 7.0 (0.96) / 6.3 (0.97) / 9.7 (0.95) / 4.2 (1.00) | 35–69 |
+| ±1.5° yaw/pitch, ±1° roll sensor error, ±25% exposure, 720 × 1280 | 28.5 (0.29) / 12.1 (0.89) / 9.9 (0.90) / 18.9 (0.85) / 6.1 (0.99) | 47–64 |
+| exact poses, 960 × 1280, camera matching the prior | 7.0 (0.96) / 9.5 (0.95) / 5.4 (0.98) / 8.9 (0.96) / 3.7 (1.00) | 34–68 |
+| control: 960 × 1280 with a 43.2° short side (prior mismatch) | 59 / 40 / 40 / 42 / 15.5 — **fails** | 58–64 |
+
+Alignment logs: exact 99/99 pairs, misfit 1.00° → 0.13°; pose-error 84/91 pairs, 2.09° → 0.15°, max correction 2.61°. The ERP is upright and unmirrored; the viewer's heading origin is a constant quarter turn from target 13 (a yaw offset, not a defect in geometry).
+
+**Remaining visible defects in the replay:** with sensor error, the low-texture ceiling near the zenith shows doubled checker edges, and one small kink appears near +60°. These are synthetic-scene results; real rooms add parallax and blank walls.
+
+**Still required:** replay the user's original 37 frames (staging origin, original phone) through Restitch and inspect window frames, wall edges, floor lines, ring boundaries and the wrap; then iPhone/Safari and Android/Chrome runs with device, OS and browser versions, frame dimensions, output dimensions, stage list, memory behaviour and visible defects recorded. The supplied 1080 × 540 WhatsApp JPEG has neither frames nor poses and cannot be replayed. Slice 2 is **not** complete.
+
+**Checks:** `app/web` `npm test` 18 passed; `npm run build` passed (existing large-chunk warning).
+
 ## Safari panorama-save follow-up (2026-11-15)
 
 - **Reported physical result:** iPhone XS Max / Safari (versions not supplied): after all 37 targets, stitching reached local panorama storage and failed with `t.createWritable is not a function`. Actual saved output dimensions and visual stitch quality remain unverified. The 37 original IndexedDB frames were not deleted by this path.
