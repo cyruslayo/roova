@@ -11,7 +11,7 @@ import { stitchRoom } from '../src/capture/stitch';
 import type { SavedFrame } from '../src/capture/storage';
 
 const D = Math.PI / 180;
-type Options = { width: number; height: number; shortFov: number; poseError: number; rollError: number; exposureJitter: number; seed: number };
+type Options = { simulateSafariBlobFailure?: boolean; width: number; height: number; shortFov: number; poseError: number; rollError: number; exposureJitter: number; seed: number };
 
 function rng(seed: number) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 const hash = (a: number, b: number) => { const h = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return h - Math.floor(h); };
@@ -73,7 +73,18 @@ async function run(partial: Partial<Options>) {
     frames.push({ key: `replay:${target.id}`, roomId: 'replay', targetId: target.id, targetYaw: target.yaw, targetPitch: target.pitch, imageBlob: blob, width: o.width, height: o.height, timestamp: new Date().toISOString(), videoTime: 0, pose });
   }
   const t0 = performance.now(), stages: string[] = [];
-  const result = await stitchRoom(frames, (_p, message) => { stages.push(message); });
+  // Reproduces the Safari symptom: createImageBitmap(blob) rejects with
+  // "An error occurred reading the Blob argument to createImageBitmap", and
+  // no worker is available, so frames must decode through the <img> fallback.
+  const realBitmap = window.createImageBitmap, realOffscreen = (window as unknown as { OffscreenCanvas?: unknown }).OffscreenCanvas;
+  if (o.simulateSafariBlobFailure) {
+    (window as unknown as { createImageBitmap: unknown }).createImageBitmap = (source: unknown) => source instanceof Blob
+      ? Promise.reject(new DOMException('An error occurred reading the Blob argument to createImageBitmap.', 'InvalidStateError')) : realBitmap.call(window, source as ImageBitmapSource);
+    (window as unknown as { OffscreenCanvas?: unknown }).OffscreenCanvas = undefined;
+  }
+  let result: Awaited<ReturnType<typeof stitchRoom>>;
+  try { result = await stitchRoom(frames, (_p, message) => { stages.push(message); }); }
+  finally { window.createImageBitmap = realBitmap; (window as unknown as { OffscreenCanvas?: unknown }).OffscreenCanvas = realOffscreen; }
   const seconds = (performance.now() - t0) / 1000;
   const bitmap = await createImageBitmap(result.blob);
   const out = document.createElement('canvas'); out.width = bitmap.width; out.height = bitmap.height;

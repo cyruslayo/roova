@@ -8,6 +8,8 @@ const out = process.argv[2] ?? 'e2e/out';
 mkdirSync(out, { recursive: true });
 const cases = [
   { name: 'exact-9x16', options: {} },
+  // Safari regression: createImageBitmap(Blob) rejects and no worker; must decode via <img>.
+  { name: 'safari-blob-fallback-9x16', options: { simulateSafariBlobFailure: true } },
   { name: 'pose-error-9x16', options: { poseError: 1.5, rollError: 1, exposureJitter: 0.25, seed: 11 } },
   // 3:4 frames with the long side at VFTCam's 70.28° (the product's prior: phones crop the short side).
   { name: 'exact-3x4', options: { width: 960, height: 1280, shortFov: 55.46, seed: 5 } },

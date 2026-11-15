@@ -58,7 +58,34 @@ export function stitchPose(frame: SavedFrame) {
 
 const isIOS = () => typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
-async function decode(frame: SavedFrame, width: number, height: number, worker: Worker | null): Promise<{ pixels: Uint8ClampedArray; worker: Worker | null; sourceWidth: number; sourceHeight: number }> {
+type Decoded = { pixels: Uint8ClampedArray; worker: Worker | null; sourceWidth: number; sourceHeight: number };
+
+// Copies the stored frame into memory. Safari can fail to read IndexedDB-backed
+// blobs through createImageBitmap ("An error occurred reading the Blob argument")
+// or after they are posted to a worker; an in-memory copy avoids both.
+async function frameBytes(frame: SavedFrame): Promise<Blob> {
+  try { return new Blob([await frame.imageBlob.arrayBuffer()], { type: frame.imageBlob.type || 'image/jpeg' }); }
+  catch { throw new Error(`The saved image for target ${frame.targetId} cannot be read from this browser's storage. Recapture target ${frame.targetId}; the other saved frames are kept.`); }
+}
+
+async function imageElement(blob: Blob): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image(); image.src = url; await image.decode(); return image;
+  } finally { URL.revokeObjectURL(url); }
+}
+
+function draw(source: CanvasImageSource, width: number, height: number): Uint8ClampedArray {
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true }); if (!ctx) throw new Error('Cannot prepare camera images.');
+  ctx.drawImage(source, 0, 0, width, height);
+  const pixels = ctx.getImageData(0, 0, width, height).data;
+  canvas.width = canvas.height = 1;
+  return pixels;
+}
+
+async function decode(frame: SavedFrame, width: number, height: number, worker: Worker | null): Promise<Decoded> {
+  const blob = await frameBytes(frame);
   if (worker) {
     const active = worker;
     try {
@@ -66,20 +93,25 @@ async function decode(frame: SavedFrame, width: number, height: number, worker: 
         const timeout = setTimeout(() => reject(new Error('Worker timed out')), 15000);
         active.onmessage = event => { if (event.data.id !== frame.targetId) return; clearTimeout(timeout); event.data.error ? reject(new Error(event.data.error)) : resolve(event.data); };
         active.onerror = () => { clearTimeout(timeout); reject(new Error('Worker preparation failed')); };
-        active.postMessage({ id: frame.targetId, image: frame.imageBlob, width, height });
+        active.postMessage({ id: frame.targetId, image: blob, width, height });
       });
       return { pixels: new Uint8ClampedArray(data.pixels), worker, sourceWidth: data.sourceWidth, sourceHeight: data.sourceHeight };
     } catch { worker.terminate(); worker = null; }
   }
-  const bitmap = await createImageBitmap(frame.imageBlob);
+  // Main-thread fallback: an <img> element, as the earlier product path and VFTCam's
+  // fallback did; createImageBitmap is only a last resort.
   try {
-    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true }); if (!ctx) throw new Error('Cannot prepare camera images.');
-    ctx.drawImage(bitmap, 0, 0, width, height);
-    const pixels = ctx.getImageData(0, 0, width, height).data;
-    canvas.width = canvas.height = 1;
-    return { pixels, worker, sourceWidth: bitmap.width, sourceHeight: bitmap.height };
-  } finally { bitmap.close(); }
+    const image = await imageElement(blob);
+    return { pixels: draw(image, width, height), worker, sourceWidth: image.naturalWidth, sourceHeight: image.naturalHeight };
+  } catch (imageError) {
+    try {
+      const bitmap = await createImageBitmap(blob);
+      try { return { pixels: draw(bitmap, width, height), worker, sourceWidth: bitmap.width, sourceHeight: bitmap.height }; }
+      finally { bitmap.close(); }
+    } catch {
+      throw new Error(`The saved image for target ${frame.targetId} could not be decoded (${imageError instanceof Error ? imageError.message : 'unknown error'}). Recapture target ${frame.targetId}; the other saved frames are kept.`);
+    }
+  }
 }
 
 // The product stitch path: VFTCam's WebGL2 best-pixel pipeline (renderBestPixelPanorama

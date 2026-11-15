@@ -1,5 +1,13 @@
 # Slice 1 capture checks (2026-11-15)
 
+## Safari restitch decode regression (2026-11-15)
+
+- **Reported physical result:** user's phone on `staging.roova-capture-stage.pages.dev` (device, OS and browser versions not supplied; the message matches WebKit), **Restitch from originals** failed with “An error occurred reading the Blob argument to createImageBitmap.” The source frames were not changed.
+- **Source cause (regression in `32450fe`):** the worker's `createImageBitmap(blob)` fails on the stored frame blob; the main-thread fallback was changed from an `<img>` element (used in `4501146` and VFTCam's fallback) to `createImageBitmap(blob)`, which fails the same way, so the whole stitch stopped.
+- **Fix:** each frame is copied out of IndexedDB into an in-memory Blob first (an unreadable frame now names its target and asks for a recapture of that target only). The worker gets that copy; if the worker fails, the main thread decodes through an `<img>` element, with `createImageBitmap` only as a last resort.
+- **Browser check (HeadlessChrome 153, Linux; simulates the symptom, not Safari):** with `createImageBitmap(Blob)` forced to reject with the Safari message and no worker, the replay completed a 4096 × 2048 JPEG byte-identical to the normal path (`safari-blob-fallback-9x16` in `e2e/run-stitch-replay.mjs`). `npm test` 18 passed; `npm run build:pages` passed.
+- **Still required:** restitch on the same phone after redeploy, recording device, iOS and Safari versions and the Processing details list.
+
 ## Slice 2 stitch geometry repair (2026-11-15)
 
 **Source defects fixed** (from the stitch audit): (1) the product shader replaced VFTCam's projection while keeping VFTCam's quaternion→pose conversion, so off-center image points sampled mirrored positions; (2) every frame was stretched to 512 × 768 (2:3) and vertical FOV derived from that ratio; (3) alignment, focal refinement, local warps, overlap exposure, vignetting, routed seams, pole fill and zenith recovery were missing or approximated; (4) a fixed latitude clamp left the nadir unfilled.
