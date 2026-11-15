@@ -2,6 +2,13 @@
 
 Status: browser simulation passed; physical phone capture is **not verified**. Do not close slice 1 until a real iOS and Android capture/reload pass.
 
+## Guide scene correction (2026-11-15)
+
+- **Reported on device:** iPhone XS Max, Safari (iOS/Safari version not recorded): no spatial guide spots. This was confirmed as a source omission: the product rendered a fixed reticle and a 37-item progress grid, but no 3D capture scene. A successful physical capture was not reported.
+- **Source adaptation:** `app/web/src/capture/GuideScene.ts` renders VFTCam-style inside-out guide sphere, latitude/meridian lines, all 37 world-positioned spots, near/aligned colors, and curved photo patches with zenith projection. The render quaternion and capture selection use the same target positions; patches only appear for saved frames, including after reload. Camera viewport sizing uses `ResizeObserver` rather than window dimensions. Safari's orientation and motion permissions are now both requested from the same user gesture; missing level readings are no longer treated as level.
+- **Desktop browser check:** headless Google Chrome on Windows, viewport 390 × 844, fake camera and mocked room API: 37 targets visible on WebGL overlay. Mocked orientation/motion permissions and repeated sensor readings aligned target 19 for the automatic hold, saved a frame as **1 / 37**, and restored **1 / 37** after reload with no page exceptions. A separate locally inserted **320 × 560** JPEG fixture for target 19 restored its saved marker and displayed its pink photo patch in the sphere after reload. These are simulated browser checks, not phone results; the fake-camera capture dimensions were not separately recorded for this correction.
+- **Automated checks:** `app/web` 7 tests passed, `npm run build:pages` passed; `app/api` 4 tests passed. Vite still emits the existing large-chunk warning. Real iPhone XS Max Safari and Android Chrome guidance, level and capture still require retesting on devices.
+
 ## Source behavior adapted
 
 - `reference/vftcam-js/js/modules/hotspots.js`: 37 IDs in three 12-target rings at +45°, 0°, −45° and a +84° zenith.

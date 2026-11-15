@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
 import { ALIGNMENT_THRESHOLD, APPROACH_THRESHOLD, CAPTURE_HOLD_MS, TARGETS, nearestTarget, orientationQuaternion, poseFromQuaternion } from './core';
+import { targetPosition } from './GuideScene';
 
 describe('VFTCam capture model', () => {
   it('keeps all 37 targets with their original IDs, angles, and alignment timing', () => {
@@ -23,5 +24,16 @@ describe('VFTCam capture model', () => {
     expect(first.target).toEqual({ id: 13, yaw: 0, pitch: 0 });
     expect(first.distance).toBeLessThan(ALIGNMENT_THRESHOLD);
     expect(nearestTarget(forward, new Set([13])).target?.id).not.toBe(13);
+  });
+
+  it('places every visible guide marker at the direction used for automatic capture', () => {
+    for (const target of TARGETS) {
+      const direction = targetPosition(target).normalize();
+      const q = new Quaternion().setFromUnitVectors(new Vector3(0, 0, -1), direction);
+      const nearest = nearestTarget(q, new Set<number>());
+      expect(nearest.target?.id).toBe(target.id);
+      expect(nearest.distance).toBeLessThan(1e-6);
+      expect(direction.clone().applyQuaternion(q.clone().invert()).z).toBeCloseTo(-1, 6);
+    }
   });
 });

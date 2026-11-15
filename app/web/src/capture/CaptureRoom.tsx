@@ -4,6 +4,7 @@ import type { Quaternion } from 'three';
 import { api, type Tour } from '../api';
 import { ALIGNMENT_THRESHOLD, APPROACH_THRESHOLD, CAPTURE_HOLD_MS, LEVEL_TOLERANCE, TARGETS, nearestTarget, orientationQuaternion, poseFromQuaternion, type Target } from './core';
 import { loadFrames, saveFrame, type SavedFrame } from './storage';
+import { GuideScene } from './GuideScene';
 
 type Alignment = { target: Target | null; distance: number; level: boolean; holding: boolean };
 const INITIAL: Alignment = { target: null, distance: Infinity, level: true, holding: false };
@@ -29,11 +30,13 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
   const [saving, setSaving] = useState(false);
   const [previewUrl, setPreviewUrl] = useState('');
   const video = useRef<HTMLVideoElement>(null);
+  const guideContainer = useRef<HTMLDivElement>(null);
+  const guide = useRef<GuideScene | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const captured = useRef(new Set<number>());
   const pose = useRef<Quaternion | null>(null);
   const lastSensor = useRef(0);
-  const tilt = useRef(0);
+  const tilt = useRef<number | null>(null);
   const current = useRef<Alignment>(INITIAL);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingRef = useRef(false);
@@ -54,6 +57,19 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
   }, [roomId]);
 
   useEffect(() => { void restore(); }, [restore]);
+  useEffect(() => {
+    if (!camera || !guideContainer.current) return;
+    try {
+      const scene = new GuideScene(guideContainer.current);
+      guide.current = scene;
+      scene.syncFrames(frames);
+      if (pose.current) scene.update(pose.current, current.current.target, current.current.distance, captured.current);
+      return () => { guide.current = null; scene.dispose(); };
+    } catch (err) { setError(err instanceof Error ? `Could not start the 3D guide: ${err.message}` : 'Could not start the 3D guide.'); }
+  // Scene lifetime is tied to the camera; subsequent frame changes sync below.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera]);
+  useEffect(() => { guide.current?.syncFrames(frames); }, [frames]);
   useEffect(() => {
     const image = frames.at(-1);
     if (!image) { setPreviewUrl(''); return; }
@@ -87,7 +103,11 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
     try {
       // Safari requires this call directly inside the tap handler, before any other await.
       const orientationEvent = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: () => Promise<string> };
-      if (orientationEvent.requestPermission && await orientationEvent.requestPermission() !== 'granted') throw new DOMException('Motion access was denied.', 'NotAllowedError');
+      const motionEvent = window.DeviceMotionEvent as typeof DeviceMotionEvent & { requestPermission?: () => Promise<string> } | undefined;
+      // Request both in the same tap activation; Safari may reject a second request after an await.
+      const orientationPermission = orientationEvent.requestPermission?.();
+      const motionPermission = motionEvent?.requestPermission?.();
+      if ((orientationPermission && await orientationPermission !== 'granted') || (motionPermission && await motionPermission !== 'granted')) throw new DOMException('Motion access was denied.', 'NotAllowedError');
       setMotion(true);
     } catch (err) { setError(errorText(err, 'motion')); }
   };
@@ -126,7 +146,8 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
       setSensor(true);
       pose.current = orientationQuaternion(event.alpha, event.beta, event.gamma);
       const { target, distance } = nearestTarget(pose.current, captured.current);
-      const level = !target || Math.abs(target.pitch) > 60 || Math.abs(tilt.current) < LEVEL_TOLERANCE;
+      guide.current?.update(pose.current, target, distance, captured.current);
+      const level = !target || Math.abs(target.pitch) > 60 || (tilt.current !== null && Math.abs(tilt.current) < LEVEL_TOLERANCE);
       const next = { target: distance < APPROACH_THRESHOLD ? target : null, distance, level, holding: false };
       if (!next.target || distance >= ALIGNMENT_THRESHOLD || !level || savingRef.current || captureBlocked.current || (timer.current && current.current.target?.id !== next.target.id)) clearHold();
       if (next.target && distance < ALIGNMENT_THRESHOLD && level && !timer.current && !savingRef.current && !captureBlocked.current) {
@@ -148,12 +169,13 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
     return () => { removeEventListener('deviceorientation', onOrientation); removeEventListener('devicemotion', onMotion); clearHold(); };
   }, [motion, camera, ready, capture, clearHold]);
 
-  const status = saving ? 'Saving your frame…' : captureBlocked.current ? 'Save failed · retry when ready' : !camera ? 'Enable the rear camera to begin' : !motion ? 'Enable motion to guide your capture' : !sensor ? 'Waiting for phone orientation… Keep this page open on a phone.' : !alignment.target ? 'Turn slowly to find a target' : !alignment.level ? 'Level your phone' : alignment.holding ? 'Hold steady for one second' : alignment.distance < ALIGNMENT_THRESHOLD ? 'Aligned' : 'Almost there · move toward the target';
+  const status = saving ? 'Saving your frame…' : captureBlocked.current ? 'Save failed · retry when ready' : !camera ? 'Enable the rear camera to begin' : !motion ? 'Enable motion to guide your capture' : !sensor ? 'Waiting for phone orientation… Keep this page open on a phone.' : !alignment.target ? 'Turn slowly to find a target' : tilt.current === null && Math.abs(alignment.target.pitch) <= 60 ? 'Waiting for phone level sensor…' : !alignment.level ? 'Level your phone' : alignment.holding ? 'Hold steady for one second' : alignment.distance < ALIGNMENT_THRESHOLD ? 'Aligned' : 'Almost there · move toward the target';
 
   return <main className="capture-page">
     <header className="capture-header"><a href="/studio" className="capture-back"><ArrowLeft size={18}/> Studio</a><span className="capture-brand"><House size={17}/> stillroom<span>.</span></span><span className="capture-private">PRIVATE CAPTURE</span></header>
     <div className="capture-layout"><section className="capture-view" aria-label="Live room camera and target guidance">
       <video ref={video} muted playsInline autoPlay className="capture-video" />
+      {camera && <div ref={guideContainer} className="capture-guide" aria-hidden="true" />}
       {camera && sensor && <div className={`capture-reticle ${alignment.holding ? 'holding' : alignment.target ? 'approaching' : ''}`} aria-hidden="true"><Focus size={74} strokeWidth={1.2}/></div>}
       <div className="capture-view-label"><span>ROOM / {tour?.roomName ?? 'Loading…'}</span><strong>{alignment.target ? `TARGET ${String(alignment.target.id).padStart(2, '0')}` : 'GUIDED CAPTURE'}</strong></div>
       <div className="capture-feedback" role="status">{status}</div>
