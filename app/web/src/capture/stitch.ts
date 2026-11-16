@@ -1,6 +1,6 @@
 import { Quaternion } from 'three';
 import { TARGETS, poseFromQuaternion } from './core';
-import type { SavedFrame } from './storage';
+import { loadFrame, type SavedFrame } from './storage';
 import { VftcamStitcher, type AlignInfo, type StitchLayer } from './vftcam/stitcher.js';
 import FovCalibrator from './vftcam/fov-calibrator.js';
 import { fillPolesSimple } from './vftcam/pole-fill-simple.js';
@@ -66,9 +66,23 @@ type Decoded = { pixels: Uint8ClampedArray; worker: Worker | null; sourceWidth: 
 // Copies the stored frame into memory. Safari can fail to read IndexedDB-backed
 // blobs through createImageBitmap ("An error occurred reading the Blob argument")
 // or after they are posted to a worker; an in-memory copy avoids both.
+// A failed read is retried once from a fresh database connection before giving up.
+export class FrameReadError extends Error {
+  constructor(readonly targetId: number, readonly reason: string) {
+    super(`The saved image for target ${targetId} cannot be read from this browser's storage (${reason}). The other saved frames are kept.`);
+    this.name = 'FrameReadError';
+  }
+}
 async function frameBytes(frame: SavedFrame): Promise<Blob> {
-  try { return new Blob([await frame.imageBlob.arrayBuffer()], { type: frame.imageBlob.type || 'image/jpeg' }); }
-  catch { throw new Error(`The saved image for target ${frame.targetId} cannot be read from this browser's storage. Recapture target ${frame.targetId}; the other saved frames are kept.`); }
+  const copy = async (blob: Blob) => new Blob([await blob.arrayBuffer()], { type: blob.type || 'image/jpeg' });
+  try { return await copy(frame.imageBlob); }
+  catch (first) {
+    try {
+      const again = await loadFrame(frame.roomId, frame.targetId);
+      if (again) return await copy(again.imageBlob);
+    } catch { /* report the first error */ }
+    throw new FrameReadError(frame.targetId, first instanceof Error ? `${first.name}: ${first.message}` : String(first));
+  }
 }
 
 async function imageElement(blob: Blob): Promise<HTMLImageElement> {

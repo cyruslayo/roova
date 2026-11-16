@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, Check, Download, FileArchive, RotateCcw, ShieldAlert } from 'lucide-react';
 import { api, type PanoramaRoom as Room, type Tour } from '../api';
-import { loadFrames, loadPanorama, loadStitchJob, savePanorama, saveStitchJob, type SavedPanorama, type StitchJob } from './storage';
-import { requireCompleteRoom, stitchRoom, type StitchResult } from './stitch';
+import { checkFrames, loadFrames, loadPanorama, loadStitchJob, replaceFrames, savePanorama, saveStitchJob, type FrameReadProblem, type SavedPanorama, type StitchJob } from './storage';
+import { FrameReadError, requireCompleteRoom, stitchRoom, type StitchResult } from './stitch';
 import PanoramaViewer from './PanoramaViewer';
-import { buildFrameExport } from './export-frames';
+import { buildFrameExport, framesFromExport } from './export-frames';
 import CameraSettingsPanel from './CameraSettingsPanel';
 import { loadCameraSettings, readFovOverride, type CameraSettings } from './camera-settings';
 
@@ -38,7 +38,14 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
       const done:StitchJob={roomId,state:'complete',message:'Panorama ready',updatedAt:new Date().toISOString()};
       await saveStitchJob(done);setJob(done);setPanorama(result);
     } catch(e) {
-      const message=e instanceof Error?e.message:'Panorama preparation failed.';
+      let message=e instanceof Error?e.message:'Panorama preparation failed.';
+      if(e instanceof FrameReadError){
+        // Name every unreadable photo, not just the first one the stitch reached.
+        try {
+          const check=await checkFrames(roomId);setUnreadable(check.unreadable);
+          if(check.unreadable.length)message=`${check.unreadable.length} of ${check.frames} saved photos cannot be read by this browser: target${check.unreadable.length>1?'s':''} ${check.unreadable.map(p=>p.targetId).join(', ')} (${check.unreadable[0].reason}). Restore ${check.unreadable.length>1?'them':'it'} from an exported frames ZIP below. The other photos are kept.`;
+        } catch {/* keep the original message */}
+      }
       setError(panorama ? message : `Panorama processing or local save failed: ${message}`);
       const failed:StitchJob={roomId,state:'failed',message,updatedAt:new Date().toISOString()};
       try{await saveStitchJob(failed);setJob(failed);}catch{/* preserve original error */}
@@ -60,7 +67,25 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
     link.href=url;link.download=`stillroom-${roomId}-panorama.jpg`;document.body.appendChild(link);link.click();link.remove();
     setTimeout(()=>URL.revokeObjectURL(url),60000);
   };
-  const [exportNote,setExportNote]=useState('');
+  const [exportNote,setExportNote]=useState(''),[unreadable,setUnreadable]=useState<FrameReadProblem[]>([]),[restoreNote,setRestoreNote]=useState('');
+  // Explicit, on-device only: put back photos this browser can no longer read, from a ZIP made by
+  // "Export source frames" for this room. Only unreadable or missing targets are replaced.
+  const restoreFrames=async(file:File)=>{
+    if(busy)return;setBusy(true);setError('');setRestoreNote('Checking the file and your saved photos…');
+    try {
+      const fromFile=framesFromExport(await file.arrayBuffer(),roomId);
+      const [check,saved]=await Promise.all([checkFrames(roomId),loadFrames(roomId)]);
+      const have=new Set(saved.map(frame=>frame.targetId)),bad=new Set(check.unreadable.map(problem=>problem.targetId));
+      const replace=fromFile.filter(frame=>bad.has(frame.targetId)||!have.has(frame.targetId));
+      if(!replace.length){setUnreadable([]);setRestoreNote('All saved photos in this room can be read. Nothing was replaced.');return;}
+      const ids=replace.map(frame=>frame.targetId).join(', ');
+      if(!window.confirm(`Replace target${replace.length>1?'s':''} ${ids} with the copies in this file? Other saved photos stay as they are.`)){setRestoreNote('Nothing was replaced.');return;}
+      await replaceFrames(roomId,replace);
+      const after=await checkFrames(roomId);setUnreadable(after.unreadable);setCount(after.frames);
+      setRestoreNote(after.unreadable.length?`Restored ${replace.length}, but target${after.unreadable.length>1?'s':''} ${after.unreadable.map(p=>p.targetId).join(', ')} still cannot be read.`:`Restored target${replace.length>1?'s':''} ${ids} from the file. All ${after.frames} saved photos can be read; you can stitch again.`);
+    } catch(e){setRestoreNote('');setError(e instanceof Error?e.message:'Could not restore from that file.');}
+    finally{setBusy(false);}
+  };
   // Explicit, on-device only: the original frames and poses as one ZIP for replaying a capture elsewhere.
   const exportFrames=async()=>{
     if(busy)return;setBusy(true);setError('');setExportNote('Packing the original frames…');
@@ -77,7 +102,11 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
   };
   const exportControl=<div className="panorama-export"><button type="button" className="outline" disabled={busy||count===0} onClick={()=>void exportFrames()}><FileArchive size={16}/> Export source frames</button>
     <p>Saves the {count} original photos and their measured positions as a ZIP on this device, for troubleshooting. Nothing is uploaded.</p>
-    {exportNote && <p role="status">{exportNote}</p>}</div>;
+    {exportNote && <p role="status">{exportNote}</p>}
+    <label className={`outline restore-input${busy?' is-disabled':''}`}><FileArchive size={16}/> Restore from exported frames
+      <input type="file" accept=".zip,application/zip" disabled={busy} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void restoreFrames(file);}}/></label>
+    <p>{unreadable.length?`Target${unreadable.length>1?'s':''} ${unreadable.map(p=>p.targetId).join(', ')} cannot be read on this device. Choose the frames ZIP you exported from this room to put them back.`:'If a saved photo becomes unreadable, choose a frames ZIP exported from this room to put back only the affected photos.'}</p>
+    {restoreNote && <p role="status">{restoreNote}</p>}</div>;
   const upload=async()=>{
     if(!panorama||busy)return;
     setBusy(true);setError('');setUploadProgress(0);

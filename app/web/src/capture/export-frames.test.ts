@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TARGETS } from './core';
-import { buildFrameExport, buildZip, crc32, frameFileName, readZip } from './export-frames';
+import { buildFrameExport, buildZip, crc32, frameFileName, framesFromExport, readZip } from './export-frames';
 import type { SavedFrame } from './storage';
 
 const jpeg = (id: number) => new Uint8Array([0xff, 0xd8, id, 1, 2, 3, 0xff, 0xd9]);
@@ -36,6 +36,24 @@ describe('source frame export', () => {
     const zenith = parsed.frames.find((f: { targetId: number }) => f.targetId === 37);
     expect(zenith).toMatchObject({ file: frameFileName(37), width: 1080, height: 1920, roll: 1.5, orientationQuaternion: [0.1, 0.2, 0.3, 0.9], videoTime: 37, bytes: 8 });
     expect([...files.get(frameFileName(37))!]).toEqual([...jpeg(37)]);
+    vi.unstubAllGlobals();
+  });
+  it('restores frames from an export of the same room, byte for byte, and refuses anything else', async () => {
+    vi.stubGlobal('screen', { width: 414, height: 896 });
+    vi.stubGlobal('devicePixelRatio', 3);
+    const { blob } = await buildFrameExport('room', TARGETS.map(t => frame(t.id)), null);
+    const buffer = await blob.arrayBuffer();
+    const restored = framesFromExport(buffer, 'room');
+    expect(restored.map(f => f.targetId)).toEqual(TARGETS.map(t => t.id).sort((a, b) => a - b));
+    const seven = restored.find(f => f.targetId === 7)!;
+    expect([...new Uint8Array(await seven.imageBlob.arrayBuffer())]).toEqual([...jpeg(7)]);
+    expect(seven).toMatchObject({ key: 'room:7', roomId: 'room', width: 1080, height: 1920, pose: { roll: 1.5, orientationQuaternion: [0.1, 0.2, 0.3, 0.9] } });
+    expect(() => framesFromExport(buffer, 'other-room')).toThrow(/different room/);
+    const files = readZip(buffer); files.set(frameFileName(3), new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]));
+    const damaged = await buildZip([...files].map(([name, data]) => ({ name, data }))).arrayBuffer();
+    expect(() => framesFromExport(damaged, 'room')).toThrow(/Target 3/);
+    const notExport = await buildZip([{ name: 'a.txt', data: new Uint8Array([1]) }]).arrayBuffer();
+    expect(() => framesFromExport(notExport, 'room')).toThrow(/not a Stillroom frame export/);
     vi.unstubAllGlobals();
   });
 });

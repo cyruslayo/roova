@@ -114,3 +114,25 @@ export function readZip(buffer: ArrayBuffer): Map<string, Uint8Array> {
   }
   return files;
 }
+
+/**
+ * Turns a ZIP made by "Export source frames" back into saved frames for one room,
+ * for restoring frames this browser can no longer read. Checks the format, the
+ * room, every listed file and that each one is a JPEG of the recorded size.
+ */
+export function framesFromExport(buffer: ArrayBuffer, roomId: string): SavedFrame[] {
+  const files = readZip(buffer), raw = files.get('poses.json');
+  if (!raw) throw new Error('This file is not a Stillroom frame export (poses.json is missing).');
+  const manifest = JSON.parse(new TextDecoder().decode(raw)) as FrameExportManifest;
+  if (manifest.format !== 'roova-source-frames' || manifest.version !== 1) throw new Error('This file is not a Stillroom frame export.');
+  if (manifest.roomId !== roomId) throw new Error('This export belongs to a different room, so it was not used.');
+  return manifest.frames.map(f => {
+    const data = files.get(f.file);
+    if (!data || data.length !== f.bytes || data[0] !== 0xff || data[1] !== 0xd8) throw new Error(`Target ${f.targetId} in this export is missing or damaged.`);
+    return {
+      key: `${roomId}:${f.targetId}`, roomId, targetId: f.targetId, targetYaw: f.targetYaw, targetPitch: f.targetPitch,
+      imageBlob: new Blob([data], { type: 'image/jpeg' }), width: f.width, height: f.height, timestamp: f.timestamp, videoTime: f.videoTime,
+      pose: { yaw: f.yaw, pitch: f.pitch, roll: f.roll, orientationQuaternion: f.orientationQuaternion },
+    };
+  });
+}

@@ -6,6 +6,20 @@ export type SavedFrame = {
   pose: Pose;
 };
 
+// How a frame is kept in IndexedDB. New records keep the JPEG as plain bytes
+// (`imageBytes`): Safari keeps IndexedDB Blobs as separate files, and a stored
+// Blob that can no longer be read was reported on an iPhone (2026-11-16).
+// Records written before that keep `imageBlob` and are still read.
+type StoredFrame = Omit<SavedFrame, 'imageBlob'> & { imageBlob?: Blob; imageBytes?: ArrayBuffer; imageType?: string };
+const toSavedFrame = (record: StoredFrame): SavedFrame => {
+  const { imageBytes, imageType, imageBlob, ...rest } = record;
+  return { ...rest, imageBlob: imageBytes ? new Blob([imageBytes], { type: imageType || 'image/jpeg' }) : (imageBlob as Blob) };
+};
+const toStoredFrame = (frame: SavedFrame, bytes: ArrayBuffer): StoredFrame => {
+  const { imageBlob, ...rest } = frame;
+  return { ...rest, imageBytes: bytes, imageType: imageBlob.type || 'image/jpeg' };
+};
+
 export type SavedPanorama = { roomId: string; imageBlob: Blob; width: number; height: number; timestamp: string; sourceIds: number[] };
 type StoredPanorama = Omit<SavedPanorama, 'imageBlob'> & { imageBlob: Blob | null; fileName?: string };
 export type StitchJob = { roomId: string; state: 'running' | 'failed' | 'complete'; message: string; updatedAt: string };
@@ -107,7 +121,7 @@ export async function loadFrames(roomId: string): Promise<SavedFrame[]> {
       const tx = db.transaction(STORE, 'readonly');
       const request = tx.objectStore(STORE).index('roomId').getAll(roomId);
       let frames: SavedFrame[] = [];
-      request.onsuccess = () => { frames = request.result as SavedFrame[]; };
+      request.onsuccess = () => { frames = (request.result as StoredFrame[]).map(toSavedFrame); };
       tx.oncomplete = () => resolve(frames.sort((a, b) => a.targetId - b.targetId));
       tx.onerror = () => reject(tx.error ?? new Error('Could not read saved room frames.'));
       tx.onabort = () => reject(tx.error ?? new Error('Could not read saved room frames.'));
@@ -118,16 +132,64 @@ export async function loadFrames(roomId: string): Promise<SavedFrame[]> {
 export async function saveFrame(roomId: string, target: Target, imageBlob: Blob, width: number, height: number, timestamp: string, videoTime: number, pose: Pose): Promise<SavedFrame> {
   if (imageBlob.type !== 'image/jpeg' || !imageBlob.size || width <= 0 || height <= 0) throw new Error('The camera did not produce a valid JPEG.');
   const frame: SavedFrame = { key: `${roomId}:${target.id}`, roomId, targetId: target.id, targetYaw: target.yaw, targetPitch: target.pitch, imageBlob, width, height, timestamp, videoTime, pose };
+  // Read the bytes before the transaction opens: an await inside it would end it.
+  const bytes = await imageBlob.arrayBuffer();
   const db = await open();
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put(frame);
+      tx.objectStore(STORE).put(toStoredFrame(frame, bytes));
       // A request can succeed and its transaction still abort: only complete marks capture saved.
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error('Could not save the frame.'));
       tx.onabort = () => reject(tx.error ?? new Error('Could not save the frame.'));
     });
     return frame;
+  } finally { db.close(); }
+}
+
+/** One frame, read again on its own connection (used to retry a failed read). */
+export async function loadFrame(roomId: string, targetId: number): Promise<SavedFrame | null> {
+  const record = await new Promise<StoredFrame | undefined>((resolve, reject) => {
+    open().then(db => {
+      const tx = db.transaction(STORE, 'readonly');
+      const request = tx.objectStore(STORE).get(`${roomId}:${targetId}`);
+      let value: StoredFrame | undefined;
+      request.onsuccess = () => { value = request.result as StoredFrame | undefined; };
+      tx.oncomplete = () => { db.close(); resolve(value); };
+      tx.onerror = tx.onabort = () => { db.close(); reject(tx.error ?? new Error('Could not read the saved frame.')); };
+    }, reject);
+  });
+  return record ? toSavedFrame(record) : null;
+}
+
+export type FrameReadProblem = { targetId: number; reason: string };
+const reasonOf = (error: unknown) => error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+
+/** Reads every saved frame's image in full and lists the ones this browser cannot read. */
+export async function checkFrames(roomId: string): Promise<{ frames: number; unreadable: FrameReadProblem[] }> {
+  const frames = await loadFrames(roomId), unreadable: FrameReadProblem[] = [];
+  for (const frame of frames) {
+    try {
+      const bytes = new Uint8Array(await frame.imageBlob.arrayBuffer());
+      if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) unreadable.push({ targetId: frame.targetId, reason: 'not a JPEG' });
+    } catch (error) { unreadable.push({ targetId: frame.targetId, reason: reasonOf(error) }); }
+  }
+  return { frames: frames.length, unreadable };
+}
+
+/** Replaces the given frames of one room in a single transaction (all or none). */
+export async function replaceFrames(roomId: string, frames: SavedFrame[]): Promise<void> {
+  if (frames.some(frame => frame.roomId !== roomId)) throw new Error('These frames belong to a different room.');
+  const stored = await Promise.all(frames.map(async frame => toStoredFrame(frame, await frame.imageBlob.arrayBuffer())));
+  const db = await open();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite'), store = tx.objectStore(STORE);
+      for (const record of stored) store.put(record);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('Could not restore the frames.'));
+      tx.onabort = () => reject(tx.error ?? new Error('Could not restore the frames.'));
+    });
   } finally { db.close(); }
 }
