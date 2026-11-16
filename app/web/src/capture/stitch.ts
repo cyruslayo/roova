@@ -4,6 +4,7 @@ import type { SavedFrame } from './storage';
 import { VftcamStitcher, type AlignInfo, type StitchLayer } from './vftcam/stitcher.js';
 import FovCalibrator from './vftcam/fov-calibrator.js';
 import { fillPolesSimple } from './vftcam/pole-fill-simple.js';
+import { defaultCameraSettings, nadirFillDegrees, planFov, type CameraSettings } from './camera-settings';
 
 export const PANORAMA_WIDTH = 4096, PANORAMA_HEIGHT = 2048;
 type Progress = (percent: number, message: string) => void;
@@ -20,7 +21,9 @@ export type StitchStage = { name: string; status: 'applied' | 'fallback' | 'skip
 export type StitchResult = {
   blob: Blob; width: number; height: number;
   frameSize: { width: number; height: number }; sourceSize: { width: number; height: number };
-  fov: { horizontal: number; vertical: number; calibrated: boolean };
+  // source: where the field of view came from, in VFTCam's precedence (override, saved offsets, calibration, mode base).
+  fov: { horizontal: number; vertical: number; calibrated: boolean; source: 'override' | 'manual' | 'calibrated' | 'baseline' };
+  settings: CameraSettings;
   stages: StitchStage[];
 };
 
@@ -137,7 +140,10 @@ export function alignmentFallbackDetail(failure: string | undefined, info: Align
 // with image alignment, focal refinement, local warps, overlap exposure, vignetting,
 // routed seams, pole fill and sky reference). Never VFTCam's OpenCV startStitching route.
 // `maxLongSide` lets a desktop replay of exported phone frames use the phone's cap (1280 on iOS).
-export async function stitchRoom(frames: SavedFrame[], progress: Progress, options: { maxLongSide?: number } = {}): Promise<StitchResult> {
+// `settings` are this device's camera settings (field-of-view offsets per capture mode, tripod);
+// `fovOverride` is VFTCam's developer override. Both default to "none", which calibrates as before.
+export async function stitchRoom(frames: SavedFrame[], progress: Progress, options: { maxLongSide?: number; settings?: CameraSettings; fovOverride?: { horizontal?: number | null; vertical?: number | null } } = {}): Promise<StitchResult> {
+  const settings = options.settings ?? defaultCameraSettings();
   requireCompleteRoom(frames);
   const sorted = [...frames].sort((a, b) => a.targetId - b.targetId);
   const first = sorted[0];
@@ -170,19 +176,31 @@ export async function stitchRoom(frames: SavedFrame[], progress: Progress, optio
     // Same ordering as VFTCam performBestPixelStitching.
     layers.sort((a, b) => (b.pitch - a.pitch) || (a.yaw - b.yaw));
 
-    progress(42, 'Calibrating camera field of view from overlaps');
-    const base = baselineFov(size.width, size.height);
     const stages: StitchStage[] = [];
-    let fov = { ...base, calibrated: false };
-    try {
-      const captures = new Map(layers.map(layer => [layer.hotspotId, { imageData: layer.canvas, yaw: layer.yaw, pitch: layer.pitch, actualYaw: layer.yaw, actualPitch: layer.pitch, roll: layer.roll, width: size.width, height: size.height }]));
-      // VFTCam indoor search: 41°–46° around 43.2° with a 43° prior, offset to this frame shape.
-      const offset = base.horizontal - BASE_SHORT_FOV_9_16;
-      const estimate = await FovCalibrator.calibrateFromCaptures(captures, { testFOVs: [41, 41.5, 42, 42.5, 43, 43.5, 44, 44.5, 45, 45.5, 46].map(f => f + offset), expectedFOV: 43 + offset, aspect: size.height / size.width });
-      if (estimate) fov = { horizontal: estimate.horizontal, vertical: estimate.vertical, calibrated: true };
-      stages.push(estimate ? { name: 'FOV calibration', status: 'applied', detail: `${estimate.horizontal.toFixed(1)}° × ${estimate.vertical.toFixed(1)}°` } : { name: 'FOV calibration', status: 'fallback', detail: `not enough overlap; baseline ${base.horizontal.toFixed(1)}° × ${base.vertical.toFixed(1)}°` });
-    } catch (error) {
-      stages.push({ name: 'FOV calibration', status: 'fallback', detail: `failed (${error instanceof Error ? error.message : 'unknown'}); baseline used` });
+    // Field of view in VFTCam's order (app.js:1922-1972): override, then saved offsets (which skip
+    // calibration), then calibration, falling back to the capture mode's base.
+    const plan = planFov(size.width, size.height, settings, options.fovOverride);
+    let fov: StitchResult['fov'];
+    if (plan.source === 'override') {
+      fov = { ...plan.fov, calibrated: false, source: 'override' };
+      stages.push({ name: 'Field of view', status: 'applied', detail: `developer override ${plan.fov.horizontal.toFixed(1)}° × ${plan.fov.vertical.toFixed(1)}°; calibration skipped` });
+    } else if (plan.source === 'manual') {
+      const sign = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}°`;
+      fov = { ...plan.fov, calibrated: false, source: 'manual' };
+      stages.push({ name: 'Field of view', status: 'applied', detail: `this device's ${settings.mode} setting ${plan.fov.horizontal.toFixed(1)}° × ${plan.fov.vertical.toFixed(1)}° (${sign(plan.offsets.horizontal)}, ${sign(plan.offsets.vertical)} from ${plan.base.horizontal.toFixed(1)}° × ${plan.base.vertical.toFixed(1)}°); calibration skipped` });
+    } else {
+      progress(42, 'Calibrating camera field of view from overlaps');
+      fov = { ...plan.base, calibrated: false, source: 'baseline' };
+      try {
+        const captures = new Map(layers.map(layer => [layer.hotspotId, { imageData: layer.canvas, yaw: layer.yaw, pitch: layer.pitch, actualYaw: layer.yaw, actualPitch: layer.pitch, roll: layer.roll, width: size.width, height: size.height }]));
+        // VFTCam searches 41°–46° with a 43° prior in every mode; offset to this frame shape.
+        const offset = baselineFov(size.width, size.height).horizontal - BASE_SHORT_FOV_9_16;
+        const estimate = await FovCalibrator.calibrateFromCaptures(captures, { testFOVs: [41, 41.5, 42, 42.5, 43, 43.5, 44, 44.5, 45, 45.5, 46].map(f => f + offset), expectedFOV: 43 + offset, aspect: size.height / size.width });
+        if (estimate) fov = { horizontal: estimate.horizontal, vertical: estimate.vertical, calibrated: true, source: 'calibrated' };
+        stages.push(estimate ? { name: 'FOV calibration', status: 'applied', detail: `${estimate.horizontal.toFixed(1)}° × ${estimate.vertical.toFixed(1)}°` } : { name: 'FOV calibration', status: 'fallback', detail: `not enough overlap; ${settings.mode} base ${plan.base.horizontal.toFixed(1)}° × ${plan.base.vertical.toFixed(1)}°` });
+      } catch (error) {
+        stages.push({ name: 'FOV calibration', status: 'fallback', detail: `failed (${error instanceof Error ? error.message : 'unknown'}); ${settings.mode} base used` });
+      }
     }
 
     gl = erp.getContext('webgl2', { premultipliedAlpha: false, preserveDrawingBuffer: true, failIfMajorPerformanceCaveat: false });
@@ -208,7 +226,8 @@ export async function stitchRoom(frames: SavedFrame[], progress: Progress, optio
     layers.forEach(layer => { layer.canvas.width = layer.canvas.height = 0; });
 
     progress(80, 'Filling the floor and ceiling poles');
-    try { fillPolesSimple(gl, erp, { nadirDeg: 0 }); stages.push({ name: 'Pole fill', status: 'applied', detail: 'coverage-aware push-pull fill' }); }
+    const nadirDeg = nadirFillDegrees(settings);
+    try { fillPolesSimple(gl, erp, { nadirDeg }); stages.push({ name: 'Pole fill', status: 'applied', detail: nadirDeg ? `coverage-aware push-pull fill; tripod: floor filled within ${nadirDeg}° of straight down` : 'coverage-aware push-pull fill' }); }
     catch (error) { stages.push({ name: 'Pole fill', status: 'fallback', detail: `failed (${error instanceof Error ? error.message : 'unknown'})` }); }
 
     const pixels = new Uint8Array(PANORAMA_WIDTH * PANORAMA_HEIGHT * 4);
@@ -233,7 +252,7 @@ export async function stitchRoom(frames: SavedFrame[], progress: Progress, optio
     const blob = await new Promise<Blob>((resolve, reject) => output.toBlob(result => result?.type === 'image/jpeg' ? resolve(result) : reject(new Error('JPEG encoding failed.')), 'image/jpeg', 0.9));
     output.width = output.height = 1;
     progress(100, 'Panorama ready');
-    return { blob, width: PANORAMA_WIDTH, height: PANORAMA_HEIGHT, frameSize: size, sourceSize: { width: first.width, height: first.height }, fov, stages };
+    return { blob, width: PANORAMA_WIDTH, height: PANORAMA_HEIGHT, frameSize: size, sourceSize: { width: first.width, height: first.height }, fov, settings, stages };
   } finally {
     worker?.terminate();
     layers.forEach(layer => { layer.canvas.width = layer.canvas.height = 0; });

@@ -28,7 +28,10 @@ const recordedAt = process.argv.indexOf('--recorded');
 if (recordedAt > 0) {
   const zip = process.argv[recordedAt + 1];
   console.log(`Recorded ${zip}`);
-  const r = await page.evaluate(u => window.runRecorded(u), `/e2e/${zip}`);
+  // Optional camera settings JSON (see src/capture/camera-settings.ts), e.g. --settings '{"mode":"indoor","tripod":false,"offsets":{"indoor":{"horizontal":-6,"vertical":-9},"outdoor":{"horizontal":0,"vertical":0}}}'
+  const settingsAt = process.argv.indexOf('--settings');
+  const settings = settingsAt > 0 ? JSON.parse(process.argv[settingsAt + 1]) : undefined;
+  const r = await page.evaluate(([u, s]) => window.runRecorded(u, 1280, s), [`/e2e/${zip}`, settings]);
   writeFileSync(`${out}/recorded.jpg`, Buffer.from(r.fullUrl.split(',')[1], 'base64'));
   writeFileSync(`${out}/recorded-preview.jpg`, Buffer.from(r.previewUrl.split(',')[1], 'base64'));
   delete r.fullUrl; delete r.previewUrl;

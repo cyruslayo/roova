@@ -10,6 +10,7 @@ import { TARGETS, poseFromQuaternion } from '../src/capture/core';
 import { stitchRoom } from '../src/capture/stitch';
 import type { SavedFrame } from '../src/capture/storage';
 import { buildFrameExport, readZip, type FrameExportManifest } from '../src/capture/export-frames';
+import type { CameraSettings } from '../src/capture/camera-settings';
 
 const D = Math.PI / 180;
 type Options = { simulateSafariBlobFailure?: boolean; exportOnly?: boolean; width: number; height: number; shortFov: number; poseError: number; rollError: number; exposureJitter: number; seed: number };
@@ -122,7 +123,7 @@ document.body.dataset.ready = '1';
 // Replays a real capture exported with "Export source frames" (a ZIP served from
 // e2e/fixtures/, which is git-ignored because it holds the user's photos). Frames and
 // poses go through stitchRoom() unchanged; maxLongSide 1280 matches an iPhone run.
-async function runRecorded(url: string, maxLongSide = 1280) {
+async function runRecorded(url: string, maxLongSide = 1280, settings?: CameraSettings) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Cannot load ${url}: ${response.status}`);
   const files = readZip(await response.arrayBuffer());
@@ -133,7 +134,7 @@ async function runRecorded(url: string, maxLongSide = 1280) {
     pose: { yaw: f.yaw, pitch: f.pitch, roll: f.roll, orientationQuaternion: f.orientationQuaternion },
   }));
   const t0 = performance.now();
-  const result = await stitchRoom(frames, () => {}, { maxLongSide });
+  const result = await stitchRoom(frames, () => {}, { maxLongSide, settings });
   const seconds = (performance.now() - t0) / 1000;
   const bitmap = await createImageBitmap(result.blob);
   const preview = document.createElement('canvas'); preview.width = 2048; preview.height = 1024;

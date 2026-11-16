@@ -5,6 +5,8 @@ import { loadFrames, loadPanorama, loadStitchJob, savePanorama, saveStitchJob, t
 import { requireCompleteRoom, stitchRoom, type StitchResult } from './stitch';
 import PanoramaViewer from './PanoramaViewer';
 import { buildFrameExport } from './export-frames';
+import CameraSettingsPanel from './CameraSettingsPanel';
+import { loadCameraSettings, readFovOverride, type CameraSettings } from './camera-settings';
 
 export default function PanoramaRoom({roomId}:{roomId:string}) {
   const [tour,setTour]=useState<Tour | null>(null),[panorama,setPanorama]=useState<SavedPanorama | null>(null);
@@ -12,10 +14,11 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
   const [job,setJob]=useState<StitchJob | null>(null),[count,setCount]=useState(0),[progress,setProgress]=useState(0);
   const [persisted,setPersisted]=useState(false),[report,setReport]=useState<StitchResult | null>(null);
   const [error,setError]=useState(''),[busy,setBusy]=useState(false),[ready,setReady]=useState(false);
+  const [cameraSettings,setCameraSettings]=useState<CameraSettings>(()=>loadCameraSettings()),[frameShape,setFrameShape]=useState({width:1080,height:1920});
   const refresh=useCallback(async()=>{
     try {
       const [result,frames,saved,previous]=await Promise.all([api.room(roomId),loadFrames(roomId),loadPanorama(roomId),loadStitchJob(roomId)]);
-      setTour(result.tour);setRoom(result.room);setCount(frames.length);setPanorama(saved);setPersisted(!!saved);setJob(previous??null);setReady(true);setError('');
+      setTour(result.tour);setRoom(result.room);setCount(frames.length);if(frames[0])setFrameShape({width:frames[0].width,height:frames[0].height});setPanorama(saved);setPersisted(!!saved);setJob(previous??null);setReady(true);setError('');
     } catch(e) {setError(e instanceof Error?e.message:'Could not restore this room.');setReady(false);}
   },[roomId]);
   useEffect(()=>{void refresh();},[refresh]);
@@ -26,7 +29,7 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
       const frames=await loadFrames(roomId);requireCompleteRoom(frames);
       const running:StitchJob={roomId,state:'running',message:'Preparing frames',updatedAt:new Date().toISOString()};
       await saveStitchJob(running);setJob(running);
-      const stitched=await stitchRoom(frames,(value,message)=>{setProgress(value);setJob({...running,message});});
+      const stitched=await stitchRoom(frames,(value,message)=>{setProgress(value);setJob({...running,message});},{settings:cameraSettings,fovOverride:readFovOverride()});
       setReport(stitched);
       const result:SavedPanorama={roomId,imageBlob:stitched.blob,width:stitched.width,height:stitched.height,timestamp:new Date().toISOString(),sourceIds:frames.map(frame=>frame.targetId)};
       setPanorama(result);setPersisted(false);
@@ -100,6 +103,8 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
     catch(e){setError(e instanceof Error?e.message:'Could not publish this room.');}
     finally{setBusy(false);}
   };
+  const settingsPanel=(restitch:boolean)=><CameraSettingsPanel settings={cameraSettings} onChange={setCameraSettings} frameWidth={frameShape.width} frameHeight={frameShape.height}
+    lastFov={report?{...report.fov,source:fovSourceLabel(report.fov.source)}:null} busy={busy} onApply={restitch?()=>void stitch():undefined}/>;
   return <main className="capture-page panorama-page">
     <header className="capture-header"><a href={`/studio/capture/${encodeURIComponent(roomId)}`}><ArrowLeft size={18}/> Capture</a><strong>stillroom<span>.</span></strong><span className="capture-private">ON-DEVICE PANORAMA</span></header>
     <section className="panorama-workspace"><span className="section-overline">ROOM / {tour?.roomName??'Loading…'}</span><h1>Your room, all around.</h1>
@@ -110,9 +115,11 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
         <p role="status"><Check size={17}/> {panorama.width} × {panorama.height} JPEG · {panorama.sourceIds.length} saved frames · drag to explore{persisted?' · saved on this device':' · not yet saved on this device'}</p>
         <div className="panorama-actions"><button className="primary" type="button" onClick={download}><Download size={18}/> Save JPEG</button><button type="button" className="outline" disabled={busy} onClick={()=>void stitch()}><RotateCcw size={16}/> Restitch from originals</button></div>
         {report && <details className="panorama-report"><summary>Processing details</summary>
-          <p>Source frames {report.sourceSize.width} × {report.sourceSize.height}, processed at {report.frameSize.width} × {report.frameSize.height} · field of view {report.fov.horizontal.toFixed(1)}° × {report.fov.vertical.toFixed(1)}°{report.fov.calibrated?' (calibrated)':' (baseline)'}</p>
+          <p>Source frames {report.sourceSize.width} × {report.sourceSize.height}, processed at {report.frameSize.width} × {report.frameSize.height} · field of view {report.fov.horizontal.toFixed(1)}° × {report.fov.vertical.toFixed(1)}° ({fovSourceLabel(report.fov.source)}) · {report.settings.mode}{report.settings.tripod?' · tripod':''}</p>
           <ul>{report.stages.map((stage,index)=><li key={index}><strong>{stage.name}</strong> · {stage.status==='applied'?'applied':stage.status==='fallback'?'fallback':'skipped'} · {stage.detail}</li>)}</ul>
         </details>}
+        {busy && <><label htmlFor="restitch-progress">{job?.message}</label><progress id="restitch-progress" max={100} value={progress}/></>}
+        {settingsPanel(true)}
         {exportControl}
         {!persisted && <div className="capture-error" role="status">The stitched JPEG is available to download now, but local saving did not finish. Keep this page open and retry saving without stitching again. <button type="button" disabled={busy} onClick={()=>void retrySave()}><RotateCcw size={16}/> Retry save</button></div>}
         <section className="panorama-publish"><h2>Share this room</h2><p>Your captured frames stay on this device. Upload only the finished panorama when you're happy with the preview.</p>
@@ -126,8 +133,11 @@ export default function PanoramaRoom({roomId}:{roomId:string}) {
         {job?.state==='running' && !busy && <p role="status">Previous processing was interrupted. Your source frames remain saved; retry below.</p>}
         <button type="button" className="primary" disabled={busy||count!==37} onClick={()=>void stitch()}>{busy?'Processing on this device…':job?'Retry panorama':'Create panorama'}</button>
         {busy && <><label htmlFor="stitch-progress">{job?.message}</label><progress id="stitch-progress" max={100} value={progress}/></>}
+        {count===37 && settingsPanel(false)}
         {count>0 && exportControl}
       </div>}
     </section>
   </main>;
 }
+
+const fovSourceLabel=(source:StitchResult['fov']['source'])=>source==='manual'?'set by hand on this phone':source==='override'?'developer override':source==='calibrated'?'calibrated':'mode default';
