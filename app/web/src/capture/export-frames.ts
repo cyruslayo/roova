@@ -1,5 +1,6 @@
 import type { SavedFrame } from './storage';
 import type { StitchResult } from './stitch';
+import type { CameraStreamInfo } from './camera-stream';
 
 // "Export source frames": an explicit, user-initiated save of a room's original
 // JPEGs and their measured poses as one ZIP file, so a capture can be replayed
@@ -65,6 +66,7 @@ export type FrameExportManifest = {
     file: string; targetId: number; targetYaw: number; targetPitch: number;
     yaw: number; pitch: number; roll: number; orientationQuaternion: [number, number, number, number];
     width: number; height: number; bytes: number; timestamp: string; videoTime: number;
+    camera?: CameraStreamInfo;
   }[];
   lastStitch: Omit<StitchResult, 'blob'> | null;
 };
@@ -88,6 +90,7 @@ export async function buildFrameExport(roomId: string, frames: SavedFrame[], las
       file, targetId: frame.targetId, targetYaw: frame.targetYaw, targetPitch: frame.targetPitch,
       yaw: frame.pose.yaw, pitch: frame.pose.pitch, roll: frame.pose.roll, orientationQuaternion: frame.pose.orientationQuaternion,
       width: frame.width, height: frame.height, bytes: data.length, timestamp: frame.timestamp, videoTime: frame.videoTime,
+      ...(frame.camera ? { camera: frame.camera } : {}),
     });
   }
   entries.unshift({ name: 'poses.json', data: new TextEncoder().encode(JSON.stringify(manifest, null, 2)) });
@@ -133,6 +136,7 @@ export function framesFromExport(buffer: ArrayBuffer, roomId: string): SavedFram
       key: `${roomId}:${f.targetId}`, roomId, targetId: f.targetId, targetYaw: f.targetYaw, targetPitch: f.targetPitch,
       imageBlob: new Blob([data], { type: 'image/jpeg' }), width: f.width, height: f.height, timestamp: f.timestamp, videoTime: f.videoTime,
       pose: { yaw: f.yaw, pitch: f.pitch, roll: f.roll, orientationQuaternion: f.orientationQuaternion },
+      ...(f.camera ? { camera: f.camera } : {}),
     };
   });
 }

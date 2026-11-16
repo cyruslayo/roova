@@ -5,6 +5,7 @@ import { api, type Tour } from '../api';
 import { ALIGNMENT_THRESHOLD, APPROACH_THRESHOLD, CAPTURE_HOLD_MS, LEVEL_TOLERANCE, TARGETS, nearestTarget, orientationQuaternion, poseFromQuaternion, type Target } from './core';
 import { loadFrames, saveFrame, type SavedFrame } from './storage';
 import { GuideScene } from './GuideScene';
+import { openRearCamera, shapeName, shapeRatio, type CameraStreamInfo } from './camera-stream';
 
 type Alignment = { target: Target | null; distance: number; level: boolean; holding: boolean };
 const INITIAL: Alignment = { target: null, distance: Infinity, level: true, holding: false };
@@ -33,6 +34,8 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
   const guideContainer = useRef<HTMLDivElement>(null);
   const guide = useRef<GuideScene | null>(null);
   const stream = useRef<MediaStream | null>(null);
+  const streamInfo = useRef<CameraStreamInfo | null>(null);
+  const [streamNote, setStreamNote] = useState('');
   const captured = useRef(new Set<number>());
   const pose = useRef<Quaternion | null>(null);
   const lastSensor = useRef(0);
@@ -87,8 +90,13 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
       setError('Camera capture needs HTTPS or localhost in a browser with camera support.'); return;
     }
     try {
-      const media = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+      // 4:3 first for a new room (wider view across a portrait frame); an existing room keeps its first frame's shape.
+      const first = frames[0];
+      const opened = await openRearCamera(first ? { width: first.width, height: first.height } : null);
+      const media = opened.stream;
       if (!video.current) { media.getTracks().forEach(track => track.stop()); return; }
+      streamInfo.current = opened.info;
+      setStreamNote(`Camera stream ${opened.info.width ?? '?'} × ${opened.info.height ?? '?'} (${opened.info.shape})${opened.info.label ? ` · ${opened.info.label}` : ''}${opened.info.zoom !== null ? ` · zoom ${opened.info.zoom}` : ''} · tried ${opened.tried.join('; ')}`);
       stream.current?.getTracks().forEach(track => track.stop());
       stream.current = media;
       video.current.srcObject = media;
@@ -118,9 +126,15 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
     savingRef.current = true; setSaving(true); clearHold();
     try {
       if (source.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !source.videoWidth || !source.videoHeight) throw new Error('Camera frame is not ready. Point the camera at the room and retry.');
-      const scale = Math.min(1, 1080 / source.videoWidth, 1920 / source.videoHeight);
+      // Long side at most 1920 px (VFTCam's 1080 x 1920 capture); the short side follows the stream's shape,
+      // so a 4:3 stream keeps its full width (1440 x 1920) instead of being cut to 1080 px.
+      const scale = Math.min(1, 1920 / Math.max(source.videoWidth, source.videoHeight));
       const canvas = document.createElement('canvas');
       canvas.width = Math.round(source.videoWidth * scale); canvas.height = Math.round(source.videoHeight * scale);
+      // All 37 frames of a room must share one camera shape, or the room cannot be stitched.
+      const roomFirst = frames.find(frame => frame.targetId !== target.id);
+      if (roomFirst && Math.abs(shapeRatio(canvas.width, canvas.height) - shapeRatio(roomFirst.width, roomFirst.height)) > 0.02 * shapeRatio(roomFirst.width, roomFirst.height))
+        throw new Error(`The camera now gives ${shapeName(canvas.width, canvas.height)} frames, but this room was started with ${shapeName(roomFirst.width, roomFirst.height)} frames. Start a new room to capture with this camera setting.`);
       const context = canvas.getContext('2d');
       if (!context) throw new Error('Could not prepare the camera image.');
       context.drawImage(source, 0, 0, canvas.width, canvas.height);
@@ -130,7 +144,7 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
       const timestamp = new Date().toISOString();
       const videoTime = source.currentTime;
       const jpeg = await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob && blob.type === 'image/jpeg' ? resolve(blob) : reject(new Error('The camera could not encode a JPEG.')), 'image/jpeg', 0.85));
-      const saved = await saveFrame(roomId, target, jpeg, canvas.width, canvas.height, timestamp, videoTime, measured);
+      const saved = await saveFrame(roomId, target, jpeg, canvas.width, canvas.height, timestamp, videoTime, measured, streamInfo.current ?? undefined);
       captured.current.add(target.id);
       setFrames(previous => [...previous.filter(frame => frame.targetId !== target.id), saved]);
       if (captured.current.size === TARGETS.length) {
@@ -140,7 +154,7 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
       setAlignment(INITIAL); setError('');
     } catch (err) { captureBlocked.current = true; setError(errorText(err, 'storage')); }
     finally { savingRef.current = false; setSaving(false); }
-  }, [roomId, clearHold]);
+  }, [roomId, clearHold, frames]);
 
   useEffect(() => {
     if (!motion || !camera || !ready) return;
@@ -189,7 +203,8 @@ export default function CaptureRoom({ roomId }: { roomId: string }) {
       {complete && <div className="capture-complete" role="status"><Check size={22}/><div><strong>All 37 views captured</strong><p>Your originals remain on this phone. Continue to prepare your panorama.</p></div><a className="primary action-anchor" href={`/studio/panorama/${encodeURIComponent(roomId)}`}>Create panorama</a></div>}
       {!complete && <div className="capture-permissions"><button type="button" className="capture-action" disabled={!ready || camera} onClick={() => void startCamera()}><Camera size={20}/><span>{camera ? 'Camera ready' : 'Enable camera'}</span>{camera && <Check size={18}/>}</button><button type="button" className="capture-action" disabled={!ready || !camera || motion} onClick={() => void startMotion()}><Compass size={20}/><span>{motion ? 'Motion enabled' : 'Enable motion'}</span>{motion && <Check size={18}/>}</button></div>}
       <div className="capture-progress"><div><span>CAPTURE PROGRESS</span><strong>{frames.length} / {TARGETS.length}</strong></div><div className="capture-targets" aria-label="37 capture targets">{TARGETS.map(target => <span key={target.id} className={frames.some(frame => frame.targetId === target.id) ? 'saved' : alignment.target?.id === target.id ? 'active' : ''} title={`Target ${target.id}, ${target.yaw}° yaw, ${target.pitch}° pitch`} aria-label={`Target ${target.id}: ${frames.some(frame => frame.targetId === target.id) ? 'captured' : 'not captured'}`} />)}</div></div>
-      {frames.length > 0 && <div className="capture-saved"><h2>Saved on this device</h2><img src={previewUrl} alt={`Captured room frame for target ${frames.at(-1)?.targetId}`} /><p>Target {frames.at(-1)?.targetId} · {frames.at(-1)?.width} × {frames.at(-1)?.height} px · {new Date(frames.at(-1)!.timestamp).toLocaleString()}</p><p>Measured pose: yaw {frames.at(-1)?.pose.yaw.toFixed(1)}°, pitch {frames.at(-1)?.pose.pitch.toFixed(1)}°, roll {frames.at(-1)?.pose.roll.toFixed(1)}°</p></div>}
+      {frames.length > 0 && <div className="capture-saved"><h2>Saved on this device</h2><img src={previewUrl} alt={`Captured room frame for target ${frames.at(-1)?.targetId}`} /><p>Target {frames.at(-1)?.targetId} · {frames.at(-1)?.width} × {frames.at(-1)?.height} px · {new Date(frames.at(-1)!.timestamp).toLocaleString()}</p><p>Measured pose: yaw {frames.at(-1)?.pose.yaw.toFixed(1)}°, pitch {frames.at(-1)?.pose.pitch.toFixed(1)}°, roll {frames.at(-1)?.pose.roll.toFixed(1)}°</p>{frames.at(-1)?.camera && <p>Camera stream {frames.at(-1)!.camera!.width} × {frames.at(-1)!.camera!.height} ({frames.at(-1)!.camera!.shape})</p>}</div>}
+      {streamNote && <p className="capture-stream-note">{streamNote}</p>}
     </section></div>
   </main>;
 }

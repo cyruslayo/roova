@@ -1,9 +1,12 @@
 import type { Pose, Target } from './core';
+import type { CameraStreamInfo } from './camera-stream';
 
 export type SavedFrame = {
   key: string; roomId: string; targetId: number; targetYaw: number; targetPitch: number;
   imageBlob: Blob; width: number; height: number; timestamp: string; videoTime: number;
   pose: Pose;
+  /** What the camera stream actually delivered when this frame was taken (absent on older frames). */
+  camera?: CameraStreamInfo;
 };
 
 // How a frame is kept in IndexedDB. New records keep the JPEG as plain bytes
@@ -129,9 +132,9 @@ export async function loadFrames(roomId: string): Promise<SavedFrame[]> {
   } finally { db.close(); }
 }
 
-export async function saveFrame(roomId: string, target: Target, imageBlob: Blob, width: number, height: number, timestamp: string, videoTime: number, pose: Pose): Promise<SavedFrame> {
+export async function saveFrame(roomId: string, target: Target, imageBlob: Blob, width: number, height: number, timestamp: string, videoTime: number, pose: Pose, camera?: CameraStreamInfo): Promise<SavedFrame> {
   if (imageBlob.type !== 'image/jpeg' || !imageBlob.size || width <= 0 || height <= 0) throw new Error('The camera did not produce a valid JPEG.');
-  const frame: SavedFrame = { key: `${roomId}:${target.id}`, roomId, targetId: target.id, targetYaw: target.yaw, targetPitch: target.pitch, imageBlob, width, height, timestamp, videoTime, pose };
+  const frame: SavedFrame = { key: `${roomId}:${target.id}`, roomId, targetId: target.id, targetYaw: target.yaw, targetPitch: target.pitch, imageBlob, width, height, timestamp, videoTime, pose, ...(camera ? { camera } : {}) };
   // Read the bytes before the transaction opens: an await inside it would end it.
   const bytes = await imageBlob.arrayBuffer();
   const db = await open();
